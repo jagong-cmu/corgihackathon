@@ -28,7 +28,7 @@ interface Props {
 }
 
 export function LiveTutorStage({ refresh = 0, onManage }: Props) {
-  const { state, start, end, toggleMic } = useLiveTutor();
+  const { state, start, end, toggleMic, setNarrationElement } = useLiveTutor();
   const [options, setOptions] = useState<TutorOption[]>(BUILTIN_TUTORS);
   const [selected, setSelected] = useState<string>(BUILTIN_TUTORS[0].id);
   const [configured, setConfigured] = useState<boolean | null>(null);
@@ -70,16 +70,25 @@ export function LiveTutorStage({ refresh = 0, onManage }: Props) {
     };
   }, [refresh]);
 
-  // Show the avatar's face the moment its video track arrives.
+  // Show the avatar's face the moment its video track arrives. Its voice
+  // attaches to the SAME element: one shared MediaStream is what makes the
+  // browser hold lips and audio together — split across elements they drift.
+  // When the voice rides this element it is also the narration the whiteboard
+  // cues must clock against, so register it with the hook.
   useEffect(() => {
-    const track = state.videoTrack;
+    const video = state.videoTrack;
+    const audio = state.videoAudioTrack;
     const el = videoRef.current;
-    if (!track || !el) return;
-    track.attach(el);
+    if (!video || !el) return;
+    video.attach(el);
+    audio?.attach(el);
+    if (audio) setNarrationElement(el);
     return () => {
-      track.detach(el);
+      video.detach(el);
+      audio?.detach(el);
+      if (audio) setNarrationElement(null);
     };
-  }, [state.videoTrack]);
+  }, [state.videoTrack, state.videoAudioTrack, setNarrationElement]);
 
   const active = options.find((t) => t.id === (state.persona ?? selected));
   const name = active?.name ?? state.persona ?? selected;
@@ -90,13 +99,14 @@ export function LiveTutorStage({ refresh = 0, onManage }: Props) {
       <div className="live-stage" data-speaking={state.tutorSpeaking || undefined}>
         <div className="live-face">
           {/* The video element stays mounted so attach() has a target the
-              instant the avatar publishes; the orb covers it until then. */}
+              instant the avatar publishes; the orb covers it until then.
+              NOT muted: the avatar's voice plays through this element too —
+              that's what keeps it in lip sync with the face. */}
           <video
             ref={videoRef}
             className="live-video"
             autoPlay
             playsInline
-            muted /* voice arrives on its own audio track */
             style={{ display: state.videoTrack ? "block" : "none" }}
           />
           {!state.videoTrack && (

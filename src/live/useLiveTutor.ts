@@ -5,24 +5,30 @@
  * persona) + a learner token. We join, publish the microphone, and play
  * whatever the tutor publishes: its voice (an audio track — published by the
  * agent worker directly, or republished by the avatar vendor on its behalf)
- * and, when the persona has an avatar, a talking-head video track.
+ * and, when the persona has an avatar, a talking-head video track. When both
+ * come from the avatar they must play from ONE media element — the browser
+ * only lip-syncs audio with video inside a shared MediaStream — so the pair
+ * is exposed together and the stage attaches them to the same <video>.
  *
- * The whiteboard IS here now, as a bridge rather than a renderer: the agent
+ * The whiteboard IS here too, as a bridge rather than a renderer: the agent
  * emits canvas actions on the "canvas" data topic, each carrying a `cueMs`
  * derived from real TTS timestamps. This hook validates them, holds them in a
- * LiveCueQueue clocked off the tutor's own audio element (never wall-clock),
- * and hands each one to `onBoardCue` at the moment the narration reaches it.
- * What a fired action *does* to the board belongs to whoever renders one:
- * by default cues go out over the board-cue bus (boardCueBus.ts) and the
- * shell applies them — so the sync holds no matter which React tree ends up
- * owning this hook as the app shell churns.
+ * LiveCueQueue clocked off whichever media element is playing the narration
+ * (never wall-clock), and hands each one to `onBoardCue` at the moment the
+ * narration reaches it. Voice-only tutors narrate through the hidden <audio>
+ * elements owned here; avatar tutors narrate through the stage's <video>,
+ * which the stage registers via `setNarrationElement`. What a fired action
+ * *does* to the board belongs to whoever renders one: by default cues go out
+ * over the board-cue bus (boardCueBus.ts) and the shell applies them — so the
+ * sync holds no matter which React tree ends up owning this hook as the app
+ * shell churns.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Room,
   RoomEvent,
   Track,
-  type RemoteTrack,
+  type RemoteAudioTrack,
   type RemoteVideoTrack,
 } from "livekit-client";
 import { CANVAS_TOPIC, LiveCueQueue, PlaybackClock, type BoardCue } from "./cueBridge";
@@ -47,6 +53,12 @@ export interface LiveTutorState {
   tutorSpeaking: boolean;
   /** The avatar's face, when the persona has one. Attach to a <video>. */
   videoTrack: RemoteVideoTrack | null;
+  /**
+   * The avatar's voice — audio published by the same participant as
+   * videoTrack. Attach it to the SAME element as the video: a shared
+   * MediaStream is what makes the browser hold lips and voice together.
+   */
+  videoAudioTrack: RemoteAudioTrack | null;
 }
 
 const IDLE: LiveTutorState = {
@@ -58,6 +70,7 @@ const IDLE: LiveTutorState = {
   tutorPresent: false,
   tutorSpeaking: false,
   videoTrack: null,
+  videoAudioTrack: null,
 };
 
 export interface LiveTutorApi {
@@ -65,6 +78,15 @@ export interface LiveTutorApi {
   start: (personaId: string) => Promise<void>;
   end: () => void;
   toggleMic: () => Promise<void>;
+  /**
+   * Tell the cue clock which media element is playing the narration. The
+   * stage calls this with its <video> element once it attaches the avatar's
+   * voice there (and with null on detach) — whiteboard cues then fire against
+   * that element's playback position, keeping the board on the tutor's words
+   * even when the voice rides the video. Voice-only sessions need no call:
+   * the hook clocks off its own hidden <audio> elements.
+   */
+  setNarrationElement: (el: HTMLMediaElement | null) => void;
 }
 
 export function useLiveTutor(
@@ -72,20 +94,42 @@ export function useLiveTutor(
 ): LiveTutorApi {
   const [state, setState] = useState<LiveTutorState>(IDLE);
   const roomRef = useRef<Room | null>(null);
-  // Hidden <audio> elements for remote audio tracks, keyed by track sid.
-  const audioElsRef = useRef<Map<string, HTMLMediaElement>>(new Map());
+  // Hidden <audio> elements for standalone (no sibling video) audio tracks,
+  // keyed by track sid. The avatar's voice never lands here — it plays through
+  // the stage's <video> element so the browser lip-syncs it with the face.
+  const audioElsRef = useRef<
+    Map<string, { track: RemoteAudioTrack; el: HTMLMediaElement }>
+  >(new Map());
   // Ref-indirected so a re-rendered caller doesn't rewire room listeners.
   const boardCueRef = useRef(onBoardCue);
   boardCueRef.current = onBoardCue;
   const rafRef = useRef(0);
+  // The active session's cue clock + the element the stage registered as the
+  // narration source (survives across sessions so a stage that mounted before
+  // start() still gets its element honored).
+  const clockRef = useRef<PlaybackClock | null>(null);
+  const narrationElRef = useRef<HTMLMediaElement | null>(null);
 
   const patch = useCallback((p: Partial<LiveTutorState>) => {
     setState((s) => ({ ...s, ...p }));
   }, []);
 
+  const setNarrationElement = useCallback((el: HTMLMediaElement | null) => {
+    const previous = narrationElRef.current;
+    narrationElRef.current = el;
+    const clock = clockRef.current;
+    if (!clock) return;
+    if (el) clock.attach(el);
+    else if (previous) clock.detach(previous);
+  }, []);
+
   const cleanup = useCallback(() => {
     cancelAnimationFrame(rafRef.current);
-    for (const el of audioElsRef.current.values()) el.remove();
+    clockRef.current = null;
+    for (const { track, el } of audioElsRef.current.values()) {
+      track.detach(el);
+      el.remove();
+    }
     audioElsRef.current.clear();
     roomRef.current = null;
     setState(IDLE);
@@ -131,50 +175,95 @@ export function useLiveTutor(
       const room = new Room({ adaptiveStream: true, dynacast: true });
       roomRef.current = room;
 
-      // One clock + queue per session. The clock follows whichever tutor
-      // audio element is current (the worker publishes exactly one voice
-      // track, whether directly or via the avatar), so last-attached wins.
+      // One clock + queue per session. The clock follows whichever element is
+      // playing the narration: a voice-only tutor's hidden <audio> (attached
+      // below in syncTracks) or, for avatar personas, the stage's <video>
+      // (registered via setNarrationElement).
       const clock = new PlaybackClock();
+      clockRef.current = clock;
+      if (narrationElRef.current) clock.attach(narrationElRef.current);
       const queue = new LiveCueQueue(clock, (cue) => boardCueRef.current?.(cue));
 
       const syncPresence = () => {
         patch({ tutorPresent: room.remoteParticipants.size > 0 });
       };
 
-      room
-        .on(RoomEvent.TrackSubscribed, (track: RemoteTrack) => {
-          if (track.kind === Track.Kind.Audio) {
+      // Route remote tracks by participant. An avatar publishes BOTH the face
+      // and the voice, and the browser only lip-syncs audio with video when
+      // they play from one shared MediaStream — so that pair is handed to the
+      // stage's <video> together, and only audio with no sibling video (a
+      // voice-only tutor) gets its own hidden <audio> element. Recomputed from
+      // room state on every track change rather than patched incrementally, so
+      // subscription order (voice before face or after) can't split the pair.
+      const syncTracks = () => {
+        let videoTrack: RemoteVideoTrack | null = null;
+        let videoAudioTrack: RemoteAudioTrack | null = null;
+        const standalone = new Map<string, RemoteAudioTrack>();
+
+        for (const participant of room.remoteParticipants.values()) {
+          let video: RemoteVideoTrack | null = null;
+          const audio: RemoteAudioTrack[] = [];
+          for (const pub of participant.trackPublications.values()) {
+            const track = pub.track;
+            if (!track) continue;
+            if (track.kind === Track.Kind.Video) {
+              video = video ?? (track as RemoteVideoTrack);
+            } else if (track.kind === Track.Kind.Audio) {
+              audio.push(track as RemoteAudioTrack);
+            }
+          }
+          if (video && !videoTrack) {
+            videoTrack = video;
+            videoAudioTrack = audio.shift() ?? null;
+          }
+          for (const track of audio) {
+            standalone.set(track.sid ?? String(standalone.size), track);
+          }
+        }
+
+        const els = audioElsRef.current;
+        for (const [sid, entry] of els) {
+          if (standalone.get(sid) !== entry.track) {
+            entry.track.detach(entry.el);
+            clock.detach(entry.el);
+            entry.el.remove();
+            els.delete(sid);
+          }
+        }
+        for (const [sid, track] of standalone) {
+          if (!els.has(sid)) {
             // Attach off-DOM-visible: audio needs no layout, and the Start
             // click satisfies the autoplay gesture requirement.
             const el = track.attach();
             el.style.display = "none";
             document.body.appendChild(el);
-            audioElsRef.current.set(track.sid ?? String(audioElsRef.current.size), el);
+            els.set(sid, { track, el });
             // This element is now the narration — cue timing reads from it.
             clock.attach(el);
-          } else if (track.kind === Track.Kind.Video) {
-            patch({ videoTrack: track as RemoteVideoTrack });
           }
-        })
-        .on(RoomEvent.TrackUnsubscribed, (track: RemoteTrack) => {
-          for (const el of track.detach()) {
-            clock.detach(el);
-            el.remove();
-          }
-          if (track.kind === Track.Kind.Audio && track.sid) {
-            audioElsRef.current.delete(track.sid);
-          }
-          if (track.kind === Track.Kind.Video) {
-            setState((s) =>
-              s.videoTrack === track ? { ...s, videoTrack: null } : s
-            );
-          }
-        })
+        }
+
+        // The clock lost its element (e.g. the worker unpublished its silent
+        // tutor-voice track once the avatar took over) — fall back to the
+        // stage-registered narration element so cues keep firing.
+        if (!clock.element && narrationElRef.current) {
+          clock.attach(narrationElRef.current);
+        }
+
+        patch({ videoTrack, videoAudioTrack });
+      };
+
+      room
+        .on(RoomEvent.TrackSubscribed, syncTracks)
+        .on(RoomEvent.TrackUnsubscribed, syncTracks)
         .on(RoomEvent.DataReceived, (payload, _participant, _kind, topic) => {
           if (topic === CANVAS_TOPIC) queue.acceptRaw(payload);
         })
         .on(RoomEvent.ParticipantConnected, syncPresence)
-        .on(RoomEvent.ParticipantDisconnected, syncPresence)
+        .on(RoomEvent.ParticipantDisconnected, () => {
+          syncPresence();
+          syncTracks();
+        })
         .on(RoomEvent.ActiveSpeakersChanged, (speakers) => {
           patch({
             tutorSpeaking: speakers.some(
@@ -188,6 +277,7 @@ export function useLiveTutor(
         await room.connect(session.url, session.token);
       } catch (err) {
         roomRef.current = null;
+        clockRef.current = null;
         setState({ ...IDLE, error: `could not join the room: ${(err as Error).message}` });
         return;
       }
@@ -201,6 +291,9 @@ export function useLiveTutor(
       rafRef.current = requestAnimationFrame(tickLoop);
 
       patch({ status: "live", tutorPresent: room.remoteParticipants.size > 0 });
+      // Anything subscribed while connect() was resolving never fired the
+      // handlers above — pick it up now.
+      syncTracks();
 
       // Mic last: a denied permission should leave the session listening-only,
       // not dead — the learner can still hear the tutor and re-enable later.
@@ -232,5 +325,5 @@ export function useLiveTutor(
     }
   }, [patch]);
 
-  return { state, start, end, toggleMic };
+  return { state, start, end, toggleMic, setNarrationElement };
 }

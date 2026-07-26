@@ -64,6 +64,11 @@ export class PlaybackClock {
     }
   }
 
+  /** The element currently serving as the narration clock, if any. */
+  get element(): HTMLMediaElement | null {
+    return this.el;
+  }
+
   get positionMs(): number {
     if (!this.el) return 0;
     return Math.max(0, this.el.currentTime * 1000 - this.attachedAtMs);

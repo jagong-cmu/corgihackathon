@@ -106,7 +106,7 @@ async def entrypoint(ctx: agents.JobContext) -> None:
     # synthesized segment has somewhere to go the instant it exists.
     source = rtc.AudioSource(SAMPLE_RATE, NUM_CHANNELS)
     track = rtc.LocalAudioTrack.create_audio_track("tutor-voice", source)
-    await ctx.room.local_participant.publish_track(
+    voice_publication = await ctx.room.local_participant.publish_track(
         track, rtc.TrackPublishOptions(source=rtc.TrackSource.SOURCE_MICROPHONE)
     )
 
@@ -140,10 +140,14 @@ async def entrypoint(ctx: agents.JobContext) -> None:
 
     avatar = await _maybe_start_avatar(ctx, persona)
     if avatar is not None and avatar.is_active:
-        # Simli republishes the audio it receives, so publishing to our own
-        # track too would play everything twice, slightly offset. Hand audio to
-        # the avatar only, and re-request TTS at Simli's ingest rate.
+        # The avatar republishes the audio it receives, so publishing to our
+        # own track too would play everything twice, slightly offset. Hand
+        # audio to the avatar only, and re-request TTS at its ingest rate.
         adapter.audio_source = None
+        # Our own track will never carry a frame again — unpublish it so the
+        # client sees exactly one audio track (the avatar's, lip-synced to its
+        # video) instead of a silent twin it might pair with the face.
+        await ctx.room.local_participant.unpublish_track(voice_publication.sid)
         session.avatar = avatar
         # Avatars ingest at 16k, so re-build the provider at that rate.
         session.tts = make_tts(persona, sample_rate=AVATAR_SAMPLE_RATE)
@@ -224,19 +228,37 @@ async def entrypoint(ctx: agents.JobContext) -> None:
 
     # -- inbound: the learner speaking --------------------------------------
 
+    transcribing: set[str] = set()
+
+    def _maybe_transcribe(track: rtc.Track, participant_identity: str) -> None:
+        if track.kind != rtc.TrackKind.KIND_AUDIO:
+            return
+        if participant_identity in known_avatar_identities():
+            # The avatar publishes audio on our behalf; transcribing it would
+            # make the tutor answer itself.
+            return
+        if track.sid in transcribing:
+            return
+        transcribing.add(track.sid)
+        asyncio.create_task(_transcribe(track))
+
     @ctx.room.on("track_subscribed")
     def _on_track(
         track: rtc.Track,
         publication: rtc.TrackPublication,
         participant: rtc.RemoteParticipant,
     ) -> None:
-        if track.kind != rtc.TrackKind.KIND_AUDIO:
-            return
-        if participant.identity in known_avatar_identities():
-            # The avatar publishes audio on our behalf; transcribing it would
-            # make the tutor answer itself.
-            return
-        asyncio.create_task(_transcribe(track))
+        _maybe_transcribe(track, participant.identity)
+
+    # The learner usually joins and publishes their microphone while we are
+    # still loading the persona or inside the avatar handshake — seconds during
+    # which track_subscribed fires with no handler attached. Sweep what is
+    # already in the room, or an early microphone never reaches STT and the
+    # tutor spends the whole session deaf.
+    for remote in ctx.room.remote_participants.values():
+        for publication in remote.track_publications.values():
+            if publication.track is not None:
+                _maybe_transcribe(publication.track, remote.identity)
 
     async def _transcribe(track: rtc.Track) -> None:
         """Stream the learner's audio through Scribe v2 and drive turns."""
