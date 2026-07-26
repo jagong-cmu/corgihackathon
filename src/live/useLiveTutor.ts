@@ -7,9 +7,15 @@
  * agent worker directly, or republished by the avatar vendor on its behalf)
  * and, when the persona has an avatar, a talking-head video track.
  *
- * Deliberately NOT here: the whiteboard. The agent also emits canvas actions
- * on the "canvas" data topic; this hook never subscribes to them — drawing
- * and cue sync belong to the visual subsystem and are out of scope.
+ * The whiteboard IS here now, as a bridge rather than a renderer: the agent
+ * emits canvas actions on the "canvas" data topic, each carrying a `cueMs`
+ * derived from real TTS timestamps. This hook validates them, holds them in a
+ * LiveCueQueue clocked off the tutor's own audio element (never wall-clock),
+ * and hands each one to `onBoardCue` at the moment the narration reaches it.
+ * What a fired action *does* to the board belongs to whoever renders one:
+ * by default cues go out over the board-cue bus (boardCueBus.ts) and the
+ * shell applies them — so the sync holds no matter which React tree ends up
+ * owning this hook as the app shell churns.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
@@ -19,6 +25,10 @@ import {
   type RemoteTrack,
   type RemoteVideoTrack,
 } from "livekit-client";
+import { CANVAS_TOPIC, LiveCueQueue, PlaybackClock, type BoardCue } from "./cueBridge";
+import { publishBoardCue } from "./boardCueBus";
+
+export type { BoardCue } from "./cueBridge";
 
 export type LiveTutorStatus = "idle" | "connecting" | "live";
 
@@ -57,17 +67,24 @@ export interface LiveTutorApi {
   toggleMic: () => Promise<void>;
 }
 
-export function useLiveTutor(): LiveTutorApi {
+export function useLiveTutor(
+  onBoardCue: (cue: BoardCue) => void = publishBoardCue
+): LiveTutorApi {
   const [state, setState] = useState<LiveTutorState>(IDLE);
   const roomRef = useRef<Room | null>(null);
   // Hidden <audio> elements for remote audio tracks, keyed by track sid.
   const audioElsRef = useRef<Map<string, HTMLMediaElement>>(new Map());
+  // Ref-indirected so a re-rendered caller doesn't rewire room listeners.
+  const boardCueRef = useRef(onBoardCue);
+  boardCueRef.current = onBoardCue;
+  const rafRef = useRef(0);
 
   const patch = useCallback((p: Partial<LiveTutorState>) => {
     setState((s) => ({ ...s, ...p }));
   }, []);
 
   const cleanup = useCallback(() => {
+    cancelAnimationFrame(rafRef.current);
     for (const el of audioElsRef.current.values()) el.remove();
     audioElsRef.current.clear();
     roomRef.current = null;
@@ -114,6 +131,12 @@ export function useLiveTutor(): LiveTutorApi {
       const room = new Room({ adaptiveStream: true, dynacast: true });
       roomRef.current = room;
 
+      // One clock + queue per session. The clock follows whichever tutor
+      // audio element is current (the worker publishes exactly one voice
+      // track, whether directly or via the avatar), so last-attached wins.
+      const clock = new PlaybackClock();
+      const queue = new LiveCueQueue(clock, (cue) => boardCueRef.current?.(cue));
+
       const syncPresence = () => {
         patch({ tutorPresent: room.remoteParticipants.size > 0 });
       };
@@ -127,12 +150,17 @@ export function useLiveTutor(): LiveTutorApi {
             el.style.display = "none";
             document.body.appendChild(el);
             audioElsRef.current.set(track.sid ?? String(audioElsRef.current.size), el);
+            // This element is now the narration — cue timing reads from it.
+            clock.attach(el);
           } else if (track.kind === Track.Kind.Video) {
             patch({ videoTrack: track as RemoteVideoTrack });
           }
         })
         .on(RoomEvent.TrackUnsubscribed, (track: RemoteTrack) => {
-          for (const el of track.detach()) el.remove();
+          for (const el of track.detach()) {
+            clock.detach(el);
+            el.remove();
+          }
           if (track.kind === Track.Kind.Audio && track.sid) {
             audioElsRef.current.delete(track.sid);
           }
@@ -141,6 +169,9 @@ export function useLiveTutor(): LiveTutorApi {
               s.videoTrack === track ? { ...s, videoTrack: null } : s
             );
           }
+        })
+        .on(RoomEvent.DataReceived, (payload, _participant, _kind, topic) => {
+          if (topic === CANVAS_TOPIC) queue.acceptRaw(payload);
         })
         .on(RoomEvent.ParticipantConnected, syncPresence)
         .on(RoomEvent.ParticipantDisconnected, syncPresence)
@@ -160,6 +191,14 @@ export function useLiveTutor(): LiveTutorApi {
         setState({ ...IDLE, error: `could not join the room: ${(err as Error).message}` });
         return;
       }
+
+      // Fire cues from a rAF loop against the audio clock. Poll granularity
+      // is one frame (~16ms), well inside the <50ms "good" drift band.
+      const tickLoop = () => {
+        queue.tick();
+        rafRef.current = requestAnimationFrame(tickLoop);
+      };
+      rafRef.current = requestAnimationFrame(tickLoop);
 
       patch({ status: "live", tutorPresent: room.remoteParticipants.size > 0 });
 

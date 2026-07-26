@@ -1,0 +1,64 @@
+{
+  "name": "whiteboard-tangent",
+  "description": "Whiteboard toolset: student asks what the derivative of x^2 means. Tutor presents a function_plot spec with all steps hidden, then reveals each element as the narration reaches it. reveal_step cueMs values come from TTS character timestamps, exactly like every other action.",
+  "messages": [
+    {
+      "type": "canvas_action",
+      "turnId": "t_0001",
+      "seq": 0,
+      "cueMs": 480,
+      "action": {
+        "type": "present_visual",
+        "id": "viz_parabola",
+        "spec": {
+          "specVersion": 1,
+          "track": "deterministic",
+          "primitive": "function_plot",
+          "content": { "fn": "x^2", "domain": [-3, 3] },
+          "annotations": [{ "type": "tangent", "at": 1, "label": "slope at x = 1" }],
+          "drawSequence": [
+            { "id": "axes", "element": "coordinate-plane", "durationMs": 500 },
+            { "id": "curve", "element": "function-curve", "durationMs": 900 },
+            { "id": "tangent", "element": "tangent-line", "durationMs": 600 },
+            { "id": "touch", "element": "tangent-point", "durationMs": 200 }
+          ]
+        }
+      }
+    },
+    {
+      "type": "canvas_action",
+      "turnId": "t_0001",
+      "seq": 1,
+      "cueMs": 1240,
+      "action": { "type": "reveal_step", "stepId": "axes" }
+    },
+    {
+      "type": "canvas_action",
+      "turnId": "t_0001",
+      "seq": 2,
+      "cueMs": 2980,
+      "action": { "type": "reveal_step", "stepId": "curve" }
+    },
+    {
+      "type": "canvas_action",
+      "turnId": "t_0001",
+      "seq": 3,
+      "cueMs": 5410,
+      "action": { "type": "reveal_step", "stepId": "tangent" }
+    },
+    {
+      "type": "canvas_action",
+      "turnId": "t_0001",
+      "seq": 4,
+      "cueMs": 6120,
+      "action": { "type": "reveal_step", "stepId": "touch" }
+    },
+    {
+      "type": "student_event",
+      "kind": "selected",
+      "shapeIds": ["viz_parabola"],
+      "detail": { "note": "learner clicked the tangent line" },
+      "needsScreenshot": false
+    }
+  ]
+}

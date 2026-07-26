@@ -2,6 +2,7 @@ import { z } from "zod";
 import { ActionId, Bounds, Color, Point, ShapeId } from "./common.js";
 import { GraphSpec } from "./graph.js";
 import { SimSpec } from "./sim.js";
+import { PresentVisualParams, RevealStepParams } from "./visual.js";
 
 /**
  * The teaching action set (§5.2).
@@ -237,6 +238,17 @@ export const ACTION_REGISTRY = {
     params: CameraParams,
     description: "Move the camera to focus on a shape or region already on the board.",
   },
+  // -- whiteboard toolset (the Chalk VisualSpec renderer, not tldraw) --------
+  present_visual: {
+    params: PresentVisualParams,
+    description:
+      "Put a whole visual on the whiteboard: a compact spec a deterministic renderer plays as a draw-on animation. Call it once, early in an explanation, with every element listed as a drawSequence step — the board mounts with all steps hidden, and each stays hidden until you reveal it with reveal_step. Calling it again replaces the board.",
+  },
+  reveal_step: {
+    params: RevealStepParams,
+    description:
+      "Reveal one step of the visual you presented with present_visual. Call it immediately before the words that describe that element — it draws on in sync with the words you speak after the call. Reveal every drawSequence step exactly once, in order, as your narration reaches it.",
+  },
 } as const satisfies Record<string, { params: z.ZodType; description: string }>;
 
 export type ActionName = keyof typeof ACTION_REGISTRY;
@@ -263,6 +275,8 @@ export const CanvasActionUnion = z.discriminatedUnion("type", [
   z.object({ type: z.literal("new_section") }).extend(NewSectionParams.shape),
   z.object({ type: z.literal("clear_region") }).extend(ClearRegionParams.shape),
   z.object({ type: z.literal("camera") }).extend(CameraParams.shape),
+  z.object({ type: z.literal("present_visual") }).extend(PresentVisualParams.shape),
+  z.object({ type: z.literal("reveal_step") }).extend(RevealStepParams.shape),
 ]);
 
 /** The union plus the cross-field rules JSON Schema can't express. */

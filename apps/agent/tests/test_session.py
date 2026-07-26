@@ -365,7 +365,9 @@ class TestPromptAssembly:
         assert len(call["messages"]) > 1
         assert call["messages"][-1]["content"] == "hello"
 
-    async def test_canvas_tools_are_attached(self):
+    async def test_whiteboard_tools_are_attached_by_default(self):
+        """The default toolset drives the Chalk VisualSpec renderer — the only
+        client wired to the data channel — so those are the only tools offered."""
         llm = FakeLLM([ScriptedTurn(events=["Ok."])])
         session = TutorSession(
             persona=_persona(), llm=llm, tts=FakeTTS(), channel=RecordingAdapter()
@@ -373,9 +375,36 @@ class TestPromptAssembly:
         await session.handle_transcript("hi")
 
         names = {t["name"] for t in llm.calls[0]["tools"]}
+        assert names == {"present_visual", "reveal_step"}
+        assert all(t["eager_input_streaming"] for t in llm.calls[0]["tools"])
+
+    async def test_canvas_toolset_opts_into_the_tldraw_actions(self):
+        llm = FakeLLM([ScriptedTurn(events=["Ok."])])
+        session = TutorSession(
+            persona=_persona(),
+            llm=llm,
+            tts=FakeTTS(),
+            channel=RecordingAdapter(),
+            config=SessionConfig(toolset="canvas"),
+        )
+        await session.handle_transcript("hi")
+
+        names = {t["name"] for t in llm.calls[0]["tools"]}
         assert "equation" in names
         assert "spawn_sim" in names
+        # The whiteboard pair is offered too (canvas mode keeps the full set) —
+        # a canvas client that can't render them drops them at validation.
         assert all(t["eager_input_streaming"] for t in llm.calls[0]["tools"])
+
+    async def test_unknown_toolset_fails_loudly_at_session_setup(self):
+        with pytest.raises(ValueError, match="toolset"):
+            TutorSession(
+                persona=_persona(),
+                llm=FakeLLM([]),
+                tts=FakeTTS(),
+                channel=RecordingAdapter(),
+                config=SessionConfig(toolset="tldraw"),
+            )
 
     async def test_history_accumulates_across_turns(self):
         llm = FakeLLM([ScriptedTurn(events=["One."]), ScriptedTurn(events=["Two."])])

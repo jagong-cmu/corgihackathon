@@ -1,6 +1,7 @@
 from .loader import PersonaNotFoundError, get_persona, load_persona_dir, load_persona_file
 from .prompt import (
     VOICE_AND_CANVAS_RULES,
+    VOICE_AND_WHITEBOARD_RULES,
     build_few_shot_messages,
     build_persona_prompt,
     build_system_prompt,
@@ -34,6 +35,7 @@ __all__ = [
     "Speech",
     "TeachingStyle",
     "VOICE_AND_CANVAS_RULES",
+    "VOICE_AND_WHITEBOARD_RULES",
     "Verbosity",
     "VoiceConfig",
     "build_few_shot_messages",

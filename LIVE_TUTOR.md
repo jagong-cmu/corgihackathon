@@ -8,10 +8,16 @@ barge-in, and shows a talking-head avatar when the persona has one. The
 identity, teaching style, few-shot exchanges, a voice (library pick or clone),
 and an avatar.
 
-**Deliberately out of scope:** the whiteboard. The agent also emits canvas
-actions on the `canvas` data topic; the client ignores them. Speech-synced
-drawing is a separate project — nothing under `src/render/`, `src/spec/`, or
-`src/voice/` changed.
+**The whiteboard is now wired in.** The agent drives the Chalk board over the
+`canvas` data topic with two actions: `present_visual` (a full VisualSpec,
+every step hidden) and `reveal_step` (draw one step on). Each action carries a
+`cueMs` derived from real TTS character timestamps; the client holds it in a
+cue queue clocked off the tutor's own audio element (`src/live/cueBridge.ts`)
+and applies it the moment the narration reaches it — so the drawing lands on
+the words it belongs to, even if the stream stalls. The worker defaults to
+this toolset; set `TUTOR_TOOLSET=canvas` to target the tldraw client instead.
+The renderer itself (`src/render/`, `src/spec/`) is unchanged — the voice path
+simply calls the `revealStep` seam the whiteboard always exposed.
 
 ## How the pieces connect
 
@@ -113,5 +119,11 @@ on Vercel it explains that instead of half-working.
   consent machinery that isn't built).
 - One persona per *room* (chosen at session start), which is the product
   behavior — but changing tutors means a new session.
-- Voice/whiteboard synchronization is not wired; that's the canvas-protocol
-  client work tracked in TODOS.md on the merge branch.
+- Voice/whiteboard sync is one-directional: the tutor draws, but the client
+  doesn't yet send `student_event`s back (the token already grants
+  `canPublishData` for it).
+- Turn origins are inferred from the first frame's arrival (see
+  `src/live/cueBridge.ts`), so every cue in a turn shares that frame's
+  transport latency as bias — tens of ms in practice.
+- Barge-in stops audio and unfired cues, but already-drawn steps stay on the
+  board (there is no un-reveal); the next `present_visual` replaces the board.

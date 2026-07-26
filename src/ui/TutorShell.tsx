@@ -22,6 +22,8 @@ import { WhiteboardRenderer } from "../render/WhiteboardRenderer";
 import { Avatar } from "./Avatar";
 import { useTutors } from "../tutors/TutorContext";
 import type { RevealApi } from "../voice/voiceInterface";
+import type { VisualSpec } from "../spec/visualSpec";
+import { subscribeBoardCues } from "../live/boardCueBus";
 import { askTutor, type TurnResponse } from "../api";
 import "./shell.css";
 
@@ -36,18 +38,74 @@ export function TutorShell() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // True while the board is driven by the live voice session's cue stream
+  // (present_visual / reveal_step) rather than the ask bar. Live-driven specs
+  // render with autoPlay off: reveals come from the tutor's narration, and
+  // letting the wall-clock mock driver race the audio clock would desync the
+  // two on the first hitch.
+  const [liveDriven, setLiveDriven] = useState(false);
+  // reveal_step cues that arrived before the (re)mounted board handed us its
+  // RevealApi — flushed the moment it does.
+  const pendingRevealsRef = useRef<string[]>([]);
+
   // Presenter mode: board fills the screen, the tutor becomes a face-cam bubble.
   const [presenting, setPresenting] = useState(false);
   const shellRef = useRef<HTMLDivElement>(null);
 
   const greeting = `Hi, I'm ${activeTutor.name}. Ask me anything — I'll explain it on the board while I talk.`;
-  const activeSpokenText = live ? live.spokenText : greeting;
+  const activeSpokenText =
+    live?.spokenText ||
+    (liveDriven ? "Live session — listen in and watch the board." : greeting);
 
   const onRevealApi = useCallback((api: RevealApi) => {
     revealApiRef.current = api;
+    // A live-driven board remounts on present_visual; reveal cues that fired
+    // during the mount gap land here.
+    const queued = pendingRevealsRef.current;
+    pendingRevealsRef.current = [];
+    for (const stepId of queued) api.revealStep(stepId);
   }, []);
 
-  const replay = useCallback(() => setPlayToken((t) => t + 1), []);
+  // The live voice session (owned by LiveTutorProvider at the App level, so
+  // it outlives any shell rerender) fires canvas actions at the moment the
+  // tutor's audio reaches their words. Two actions drive this board:
+  //   present_visual — a full spec, every step hidden; take over the board.
+  //   reveal_step    — draw one step on, in sync with the narration.
+  useEffect(() => {
+    return subscribeBoardCues((cue) => {
+      const action = cue.action;
+      if (action.type === "present_visual") {
+        // The old board's RevealApi dies with its remount; reveals queue
+        // until the new board reports in via onRevealApi.
+        revealApiRef.current = null;
+        pendingRevealsRef.current = [];
+        setLive({
+          spokenText: "",
+          visualSpec: action.spec as unknown as VisualSpec,
+          llm: true,
+        });
+        setLiveDriven(true);
+        setError(null);
+        setPlayToken((t) => t + 1);
+      } else if (action.type === "reveal_step") {
+        const api = revealApiRef.current;
+        if (api) api.revealStep(action.stepId);
+        else pendingRevealsRef.current.push(action.stepId);
+      }
+      // Every other action targets the tldraw client — ignore it here.
+    });
+  }, []);
+
+  const replay = useCallback(() => {
+    // A live-driven spec has no cue timeline to replay (its cues already
+    // fired off the tutor's audio) — "Replay" completes the drawing instead.
+    if (liveDriven) {
+      const api = revealApiRef.current;
+      if (api && live) for (const step of live.visualSpec.drawSequence) api.revealStep(step.id);
+      return;
+    }
+    setPlayToken((t) => t + 1);
+  }, [liveDriven, live]);
 
   const runQuery = useCallback(
     async (raw: string) => {
@@ -59,6 +117,7 @@ export function TutorShell() {
       try {
         const res = await askTutor(q);
         setLive(res);
+        setLiveDriven(false); // the ask bar re-takes the board with its own timeline
         setPlayToken((t) => t + 1);
       } catch (err) {
         setError((err as Error).message);
@@ -80,6 +139,8 @@ export function TutorShell() {
   // "New tutoring session" (from the sidebar) clears the conversation.
   useEffect(() => {
     setLive(null);
+    setLiveDriven(false);
+    pendingRevealsRef.current = [];
     setQuery("");
     setError(null);
     setPlayToken((t) => t + 1);
@@ -218,7 +279,9 @@ export function TutorShell() {
                 <WhiteboardRenderer
                   key={`live-${playToken}`}
                   rawSpec={live.visualSpec}
-                  autoPlay
+                  /* Live-driven boards reveal on the tutor's audio clock via
+                     reveal_step cues; the wall-clock mock driver stays off. */
+                  autoPlay={!liveDriven}
                   playToken={playToken}
                   onRevealApi={onRevealApi}
                 />

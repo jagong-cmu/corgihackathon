@@ -35,8 +35,11 @@ def test_protocol_version_is_readable():
     assert protocol_version() == "0.1.0"
 
 
-def test_all_twelve_actions_are_present():
-    assert len(action_names()) == 12
+def test_all_fourteen_actions_are_present():
+    """12 tldraw actions + the 2 whiteboard-toolset actions."""
+    assert len(action_names()) == 14
+    assert "present_visual" in action_names()
+    assert "reveal_step" in action_names()
 
 
 def test_every_action_has_a_description():

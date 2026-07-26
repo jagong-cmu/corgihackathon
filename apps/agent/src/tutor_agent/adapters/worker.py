@@ -120,7 +120,9 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         tts=make_tts(persona, sample_rate=SAMPLE_RATE),
         channel=adapter,
         retrieval=retrieval,
-        config=SessionConfig(),
+        # "whiteboard" drives this repo's Chalk renderer (present_visual +
+        # reveal_step). Set TUTOR_TOOLSET=canvas for the tldraw client.
+        config=SessionConfig(toolset=os.environ.get("TUTOR_TOOLSET", "whiteboard")),
         # Retrieval ACLs follow the learner the room was created for.
         user_id=owner or os.environ.get("TUTOR_USER_ID", "dev"),
     )

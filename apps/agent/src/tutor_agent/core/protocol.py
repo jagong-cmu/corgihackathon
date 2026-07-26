@@ -308,4 +308,24 @@ _DESCRIPTIONS: dict[str, str] = {
         "better choice."
     ),
     "camera": "Move the camera to focus on a shape or region already on the board.",
+    "present_visual": (
+        "Put a whole visual on the whiteboard: a compact spec a deterministic renderer plays "
+        "as a draw-on animation. Call it once, early in an explanation, with every element "
+        "listed as a drawSequence step — the board mounts with all steps hidden, and each "
+        "stays hidden until you reveal it with reveal_step. Calling it again replaces the "
+        "board."
+    ),
+    "reveal_step": (
+        "Reveal one step of the visual you presented with present_visual. Call it immediately "
+        "before the words that describe that element — it draws on in sync with the words you "
+        "speak after the call. Reveal every drawSequence step exactly once, in order, as your "
+        "narration reaches it."
+    ),
 }
+
+
+# The toolset for the Chalk whiteboard client (root src/ in this repo), which
+# renders VisualSpecs rather than tldraw shapes. The tldraw action set and this
+# one are mutually exclusive per session: a client renders one or the other,
+# and offering both would let the model draw on a board the learner can't see.
+WHITEBOARD_ACTIONS: tuple[str, ...] = ("present_visual", "reveal_step")

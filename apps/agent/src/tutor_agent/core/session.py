@@ -36,7 +36,7 @@ from ..providers.base import (
 from .channel import ChannelAdapter
 from .chunking import SentenceChunker
 from .cue import CharacterTimings, CueQueue, TimedAction, TurnTimeline
-from .protocol import canvas_tool_definitions, validate_action
+from .protocol import WHITEBOARD_ACTIONS, canvas_tool_definitions, validate_action
 
 log = logging.getLogger(__name__)
 
@@ -89,6 +89,18 @@ class SessionConfig:
     """Force a flush past this so a model that runs on without punctuation
     can't stall audio indefinitely."""
 
+    toolset: str = "whiteboard"
+    """Which board the client renders, and therefore which tools the model gets
+    and which operating rules go in the system prompt:
+
+      "whiteboard" — present_visual + reveal_step driving the Chalk VisualSpec
+                     renderer (this repo's frontend). The default, because it
+                     is the only client actually wired to the data channel.
+      "canvas"     — the 12 tldraw actions, for the tldraw client.
+
+    The two are mutually exclusive per session: offering both lets the model
+    draw on a board the learner can't see."""
+
 
 class TutorSession:
     def __init__(
@@ -122,10 +134,15 @@ class TutorSession:
         self._history: list[dict[str, Any]] = []
         self._turn_counter = 0
         self._cues = CueQueue()
-        self._tools = canvas_tool_definitions()
+        toolset = self.config.toolset
+        self._tools = canvas_tool_definitions(
+            only=WHITEBOARD_ACTIONS if toolset == "whiteboard" else None
+        )
 
         # Stable for the whole session, so it sits ahead of the cache breakpoint.
-        self._system = build_system_prompt(persona)
+        # The rules block must match the toolset (build_system_prompt raises on
+        # an unknown toolset, which also catches a typo'd TUTOR_TOOLSET early).
+        self._system = build_system_prompt(persona, toolset=toolset)
         self._few_shot = build_few_shot_messages(persona)
 
     # -- context assembly ---------------------------------------------------

@@ -818,6 +818,183 @@
         "target"
       ],
       "additionalProperties": false
+    },
+    "present_visual": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]{0,47}$",
+          "description": "Stable id you assign to this shape so you can reference it in later actions, e.g. 'eq_quadratic' or 'sim_collision'."
+        },
+        "spec": {
+          "type": "object",
+          "properties": {
+            "specVersion": {
+              "type": "number",
+              "const": 1
+            },
+            "track": {
+              "type": "string",
+              "enum": [
+                "deterministic",
+                "freeform"
+              ],
+              "description": "'deterministic' for real math primitives, 'freeform' for freeform_scene."
+            },
+            "primitive": {
+              "type": "string",
+              "enum": [
+                "function_plot",
+                "vector_diagram",
+                "number_line",
+                "animated_diagram",
+                "equation",
+                "freeform_scene"
+              ]
+            },
+            "content": {
+              "type": "object",
+              "propertyNames": {
+                "type": "string"
+              },
+              "additionalProperties": {},
+              "description": "Primitive-specific payload — the exact shape per primitive is in your whiteboard rules."
+            },
+            "annotations": {
+              "maxItems": 16,
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "Annotation kind, e.g. 'tangent'."
+                  },
+                  "at": {
+                    "description": "Primitive-specific anchor: a scalar x-value or an [x, y] point.",
+                    "anyOf": [
+                      {
+                        "type": "number"
+                      },
+                      {
+                        "type": "array",
+                        "prefixItems": [
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "type": "number"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  "label": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "type"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "drawSequence": {
+              "minItems": 1,
+              "maxItems": 24,
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64,
+                    "description": "Step id. reveal_step refers to this; for animated_diagram it must equal the element's id."
+                  },
+                  "element": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64,
+                    "description": "Renderer element this step reveals. Element names are primitive-specific and prescriptive — see the whiteboard rules in your system prompt."
+                  },
+                  "durationMs": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 10000,
+                    "description": "How long the element takes to draw on once revealed, in ms. 400-1200 reads naturally."
+                  }
+                },
+                "required": [
+                  "id",
+                  "element",
+                  "durationMs"
+                ],
+                "additionalProperties": false
+              },
+              "description": "Every element of the visual, in reveal order. All steps start hidden."
+            },
+            "syncCues": {
+              "description": "Omit. Live sessions time reveals via reveal_step, not authored offsets.",
+              "maxItems": 24,
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "stepId": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "onPhrase": {
+                    "type": "string"
+                  },
+                  "atMs": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  }
+                },
+                "required": [
+                  "stepId"
+                ],
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": [
+            "specVersion",
+            "track",
+            "primitive",
+            "content",
+            "drawSequence"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "id",
+        "spec"
+      ],
+      "additionalProperties": false
+    },
+    "reveal_step": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "stepId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "description": "Id of a drawSequence step in the visual you presented with present_visual this turn."
+        }
+      },
+      "required": [
+        "stepId"
+      ],
+      "additionalProperties": false
     }
   },
   "canvasAction": {
@@ -1674,6 +1851,189 @@
           "type",
           "op",
           "target"
+        ]
+      },
+      {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "present_visual"
+          },
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]{0,47}$",
+            "description": "Stable id you assign to this shape so you can reference it in later actions, e.g. 'eq_quadratic' or 'sim_collision'."
+          },
+          "spec": {
+            "type": "object",
+            "properties": {
+              "specVersion": {
+                "type": "number",
+                "const": 1
+              },
+              "track": {
+                "type": "string",
+                "enum": [
+                  "deterministic",
+                  "freeform"
+                ],
+                "description": "'deterministic' for real math primitives, 'freeform' for freeform_scene."
+              },
+              "primitive": {
+                "type": "string",
+                "enum": [
+                  "function_plot",
+                  "vector_diagram",
+                  "number_line",
+                  "animated_diagram",
+                  "equation",
+                  "freeform_scene"
+                ]
+              },
+              "content": {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string"
+                },
+                "additionalProperties": {},
+                "description": "Primitive-specific payload — the exact shape per primitive is in your whiteboard rules."
+              },
+              "annotations": {
+                "maxItems": 16,
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "minLength": 1,
+                      "description": "Annotation kind, e.g. 'tangent'."
+                    },
+                    "at": {
+                      "description": "Primitive-specific anchor: a scalar x-value or an [x, y] point.",
+                      "anyOf": [
+                        {
+                          "type": "number"
+                        },
+                        {
+                          "type": "array",
+                          "prefixItems": [
+                            {
+                              "type": "number"
+                            },
+                            {
+                              "type": "number"
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    "label": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "type"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "drawSequence": {
+                "minItems": 1,
+                "maxItems": 24,
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 64,
+                      "description": "Step id. reveal_step refers to this; for animated_diagram it must equal the element's id."
+                    },
+                    "element": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 64,
+                      "description": "Renderer element this step reveals. Element names are primitive-specific and prescriptive — see the whiteboard rules in your system prompt."
+                    },
+                    "durationMs": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 10000,
+                      "description": "How long the element takes to draw on once revealed, in ms. 400-1200 reads naturally."
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "element",
+                    "durationMs"
+                  ],
+                  "additionalProperties": false
+                },
+                "description": "Every element of the visual, in reveal order. All steps start hidden."
+              },
+              "syncCues": {
+                "description": "Omit. Live sessions time reveals via reveal_step, not authored offsets.",
+                "maxItems": 24,
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "stepId": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "onPhrase": {
+                      "type": "string"
+                    },
+                    "atMs": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    }
+                  },
+                  "required": [
+                    "stepId"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "required": [
+              "specVersion",
+              "track",
+              "primitive",
+              "content",
+              "drawSequence"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "type",
+          "id",
+          "spec"
+        ]
+      },
+      {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "reveal_step"
+          },
+          "stepId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "description": "Id of a drawSequence step in the visual you presented with present_visual this turn."
+          }
+        },
+        "required": [
+          "type",
+          "stepId"
         ]
       }
     ]
@@ -2561,6 +2921,189 @@
                   "type",
                   "op",
                   "target"
+                ]
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "const": "present_visual"
+                  },
+                  "id": {
+                    "type": "string",
+                    "pattern": "^[a-z][a-z0-9_]{0,47}$",
+                    "description": "Stable id you assign to this shape so you can reference it in later actions, e.g. 'eq_quadratic' or 'sim_collision'."
+                  },
+                  "spec": {
+                    "type": "object",
+                    "properties": {
+                      "specVersion": {
+                        "type": "number",
+                        "const": 1
+                      },
+                      "track": {
+                        "type": "string",
+                        "enum": [
+                          "deterministic",
+                          "freeform"
+                        ],
+                        "description": "'deterministic' for real math primitives, 'freeform' for freeform_scene."
+                      },
+                      "primitive": {
+                        "type": "string",
+                        "enum": [
+                          "function_plot",
+                          "vector_diagram",
+                          "number_line",
+                          "animated_diagram",
+                          "equation",
+                          "freeform_scene"
+                        ]
+                      },
+                      "content": {
+                        "type": "object",
+                        "propertyNames": {
+                          "type": "string"
+                        },
+                        "additionalProperties": {},
+                        "description": "Primitive-specific payload — the exact shape per primitive is in your whiteboard rules."
+                      },
+                      "annotations": {
+                        "maxItems": 16,
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "type": {
+                              "type": "string",
+                              "minLength": 1,
+                              "description": "Annotation kind, e.g. 'tangent'."
+                            },
+                            "at": {
+                              "description": "Primitive-specific anchor: a scalar x-value or an [x, y] point.",
+                              "anyOf": [
+                                {
+                                  "type": "number"
+                                },
+                                {
+                                  "type": "array",
+                                  "prefixItems": [
+                                    {
+                                      "type": "number"
+                                    },
+                                    {
+                                      "type": "number"
+                                    }
+                                  ]
+                                }
+                              ]
+                            },
+                            "label": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "type"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "drawSequence": {
+                        "minItems": 1,
+                        "maxItems": 24,
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "id": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 64,
+                              "description": "Step id. reveal_step refers to this; for animated_diagram it must equal the element's id."
+                            },
+                            "element": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 64,
+                              "description": "Renderer element this step reveals. Element names are primitive-specific and prescriptive — see the whiteboard rules in your system prompt."
+                            },
+                            "durationMs": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 10000,
+                              "description": "How long the element takes to draw on once revealed, in ms. 400-1200 reads naturally."
+                            }
+                          },
+                          "required": [
+                            "id",
+                            "element",
+                            "durationMs"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "description": "Every element of the visual, in reveal order. All steps start hidden."
+                      },
+                      "syncCues": {
+                        "description": "Omit. Live sessions time reveals via reveal_step, not authored offsets.",
+                        "maxItems": 24,
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "stepId": {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "onPhrase": {
+                              "type": "string"
+                            },
+                            "atMs": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            }
+                          },
+                          "required": [
+                            "stepId"
+                          ],
+                          "additionalProperties": false
+                        }
+                      }
+                    },
+                    "required": [
+                      "specVersion",
+                      "track",
+                      "primitive",
+                      "content",
+                      "drawSequence"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "required": [
+                  "type",
+                  "id",
+                  "spec"
+                ]
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "const": "reveal_step"
+                  },
+                  "stepId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64,
+                    "description": "Id of a drawSequence step in the visual you presented with present_visual this turn."
+                  }
+                },
+                "required": [
+                  "type",
+                  "stepId"
                 ]
               }
             ]
