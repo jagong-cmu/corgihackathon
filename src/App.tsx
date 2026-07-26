@@ -1,12 +1,15 @@
+import { TutorProvider } from "./tutors/TutorContext";
 import { TutorShell } from "./ui/TutorShell";
-import { MaterialsPanel } from "./ui/MaterialsPanel";
+import { Sidebar } from "./ui/Sidebar";
+import { CreateTutorModal } from "./ui/CreateTutorModal";
 
 export default function App() {
   return (
-    <>
+    <TutorProvider>
       <TutorShell />
-      {/* Self-contained Phase 3 upload widget (floating; own inline styles). */}
-      <MaterialsPanel />
-    </>
+      {/* Left drawer (sessions, tutors, materials) + on-site tutor creation. */}
+      <Sidebar />
+      <CreateTutorModal />
+    </TutorProvider>
   );
 }

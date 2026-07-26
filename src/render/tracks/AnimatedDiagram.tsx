@@ -264,57 +264,22 @@ export function AnimatedDiagram({ content, state }: Props) {
           }
         })}
 
-        {/* Caption: wrapped to <=2 lines and auto-fit to the width so a long
-            sentence never clips at the board edges. */}
-        {content.caption &&
-          anyRevealed &&
-          (() => {
-            const maxChars = 44;
-            const words = content.caption.split(/\s+/);
-            const lines: string[] = [];
-            let cur = "";
-            for (const w of words) {
-              const next = cur ? `${cur} ${w}` : w;
-              if (next.length > maxChars && cur) {
-                lines.push(cur);
-                cur = w;
-              } else {
-                cur = next;
-              }
-            }
-            if (cur) lines.push(cur);
-            const shown = lines.slice(0, 2);
-            const longest = Math.max(1, ...shown.map((l) => l.length));
-            // ~0.52 avg glyph width per font unit; shrink to fit W with margin.
-            const fs = Math.max(2.6, Math.min(5, (W - 8) / (longest * 0.52)));
-            const lineH = fs * 1.18;
-            const startY = H - 2.5 - (shown.length - 1) * lineH;
-            return (
-              <g>
-                {shown.map((ln, i) => (
-                  <text
-                    key={i}
-                    x={W / 2}
-                    y={startY + i * lineH}
-                    fontSize={fs}
-                    fontFamily="system-ui, sans-serif"
-                    fontWeight={600}
-                    fill={COLORS.ink}
-                    textAnchor="middle"
-                    opacity={0.92}
-                    style={{
-                      paintOrder: "stroke",
-                      stroke: "#fefdfa",
-                      strokeWidth: fs * 0.28,
-                      strokeLinejoin: "round",
-                    }}
-                  >
-                    {ln}
-                  </text>
-                ))}
-              </g>
-            );
-          })()}
+        {/* Caption: centered near the bottom, faded in once anything shows. */}
+        {content.caption && anyRevealed && (
+          <text
+            x={W / 2}
+            y={H - 3}
+            fontSize={5}
+            fontFamily="system-ui, sans-serif"
+            fontWeight={600}
+            fill={COLORS.ink}
+            textAnchor="middle"
+            opacity={0.92}
+            style={{ paintOrder: "stroke", stroke: "#fefdfa", strokeWidth: 1.4, strokeLinejoin: "round" }}
+          >
+            {content.caption}
+          </text>
+        )}
       </svg>
     </div>
   );
