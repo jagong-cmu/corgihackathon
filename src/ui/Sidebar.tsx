@@ -30,6 +30,7 @@ export function Sidebar() {
     sidebarOpen,
     closeSidebar,
     openCreate,
+    openManage,
     newSession,
   } = useTutors();
 
@@ -201,6 +202,16 @@ export function Sidebar() {
             }}
           >
             <span className="sb-plus">＋</span> Create a new tutor
+          </button>
+          <button
+            type="button"
+            className="sb-create"
+            onClick={() => {
+              openManage();
+              closeSidebar();
+            }}
+          >
+            Manage voice tutors
           </button>
         </section>
 

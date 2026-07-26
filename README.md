@@ -33,9 +33,16 @@ the repo — and its zod validator in
 
 ```bash
 npm install
-npm run dev        # Vite dev server (Phase 1: hardcoded specs)
-npm run test:spec  # validate the spec contract + math evaluator (no browser)
+npm run dev          # Vite dev server (Phase 1: hardcoded specs)
+npm run test:spec    # validate the spec contract + math evaluator (no browser)
+npm run test:rag     # extract → chunk → embed → retrieve pipeline (no browser)
+npm run test:tutors  # tutor roster guardrails: client fallback ↔ served library ↔ prod route
 ```
+
+More docs: the live voice session (LiveKit, agent worker, avatars, deploys)
+is covered in [LIVE_TUTOR.md](LIVE_TUTOR.md); the Postgres schema and
+migrations in [infra/README.md](infra/README.md); releases in
+[CHANGELOG.md](CHANGELOG.md).
 
 ## Build order / phase status
 
@@ -69,7 +76,10 @@ src/
     mathfn.ts      safe single-variable function evaluator
   mascot/          Trudy SVG rig (CSS-driven poses + expressions)
   voice/           voice module interface + mock timer driver
-  ui/              TutorShell test harness (person-left / whiteboard-right)
-server/            LLM / Merge / RAG stubs (Phase 2/3)
-scripts/           testSpec.ts — headless contract self-test
+  live/            live voice session (LiveKit client, cue bridge, session stage)
+  tutors/          tutor roster context + create/manage tutor modals
+  ui/              TutorShell (person-left / whiteboard-right) + sidebar + panels
+server/            LLM / Merge / RAG + prod server (prod.ts serves dist + /api routes)
+api/               Vercel serverless functions + shared _lib (live, tutorLibrary)
+scripts/           testSpec.ts / testRag.ts / testTutors.ts — headless self-tests
 ```
