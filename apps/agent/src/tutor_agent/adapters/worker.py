@@ -128,6 +128,9 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         ctx.add_shutdown_callback(pool.close)
 
     stt = lk_elevenlabs.STT(
+        # Explicit: the plugin's env fallback reads ELEVEN_API_KEY, not the
+        # ELEVENLABS_API_KEY name everything else in this repo documents.
+        api_key=os.environ["ELEVENLABS_API_KEY"],
         use_realtime=True,
         sample_rate=STT_SAMPLE_RATE,
         server_vad=VAD_OPTIONS,
