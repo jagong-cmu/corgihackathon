@@ -1,9 +1,0 @@
-{
-  "pid": 84990,
-  "port": 51477,
-  "token": "9554c7ee-e5a7-49f4-8668-ebb0eebae869",
-  "startedAt": "2026-07-26T11:02:46.730Z",
-  "serverPath": "/Users/jonathang/.claude/skills/gstack/browse/src/server.ts",
-  "mode": "launched",
-  "configHash": "303a7eeccc03078b"
-}

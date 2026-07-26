@@ -9,3 +9,8 @@ dist-ssr
 .vite
 *.log
 .cache
+
+# Python bytecode + local gstack tool state (accidentally committed once)
+__pycache__/
+*.pyc
+.gstack/
