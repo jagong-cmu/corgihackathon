@@ -23,20 +23,37 @@ QUESTION = "I keep messing up factoring. Can you walk me through x squared minus
 
 
 class TimingTTS:
-    """Wraps the real TTS so we can measure and keep the audio."""
+    """Wraps the real TTS so we can measure and keep the audio.
+
+    Must proxy synthesize_stream as well as synthesize — a wrapper that only
+    forwards the blocking call silently downgrades the session to the slow
+    path, which is exactly the thing being measured.
+    """
 
     def __init__(self, inner: ElevenLabsTTS) -> None:
         self.inner = inner
         self.first_audio_ms: float | None = None
         self.audio = bytearray()
+        self.chunks = 0
         self._t0 = time.perf_counter()
+
+    def _mark(self) -> None:
+        if self.first_audio_ms is None:
+            self.first_audio_ms = (time.perf_counter() - self._t0) * 1000
 
     async def synthesize(self, text: str, *, voice_id: str, model: str):
         result = await self.inner.synthesize(text, voice_id=voice_id, model=model)
-        if self.first_audio_ms is None:
-            self.first_audio_ms = (time.perf_counter() - self._t0) * 1000
+        self._mark()
         self.audio.extend(result.audio)
         return result
+
+    async def synthesize_stream(self, text: str, *, voice_id: str, model: str):
+        async for chunk in self.inner.synthesize_stream(text, voice_id=voice_id, model=model):
+            if chunk.audio:
+                self._mark()
+                self.audio.extend(chunk.audio)
+                self.chunks += 1
+            yield chunk
 
 
 async def main() -> int:
@@ -81,14 +98,15 @@ async def main() -> int:
     if tts.first_audio_ms is not None:
         print(f"first audio at:  {tts.first_audio_ms:>7.0f}ms   (budget 1200ms)")
     print(f"frames emitted:  {len(adapter.frames):>7}")
+    print(f"audio chunks:    {tts.chunks:>7}")
     print(f"dropped:         {len(result.dropped_actions):>7}")
     for name, errors in result.dropped_actions:
         print(f"    {name}: {'; '.join(errors)}")
 
     if tts.audio:
-        out = Path("/tmp/tutor-smoke.mp3")
+        out = Path("/tmp/tutor-smoke.pcm")
         out.write_bytes(bytes(tts.audio))
-        print(f"\naudio -> {out}   (afplay {out})")
+        print(f"\naudio -> {out}   (ffplay -f s16le -ar 48000 -ac 1 {out})")
 
     await tts.inner.aclose()
     return 1 if result.dropped_actions else 0

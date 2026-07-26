@@ -13,7 +13,14 @@ from tutor_agent.core import (
 )
 from tutor_agent.persona import load_persona_dir
 from tutor_agent.persona.loader import DEFAULT_PERSONA_DIR
-from tutor_agent.providers import FakeAvatar, FakeLLM, FakeRetrieval, FakeTTS, ScriptedTurn
+from tutor_agent.providers import (
+    FakeAvatar,
+    FakeLLM,
+    FakeRetrieval,
+    FakeStreamingTTS,
+    FakeTTS,
+    ScriptedTurn,
+)
 from tutor_agent.providers.base import Chunk
 
 
@@ -385,3 +392,91 @@ class TestStreamingTTS:
         assert tts.synthesized == []
         assert result.first_audio_ms is None
         assert adapter.frames
+
+
+class TestStreamingProvider:
+    """When the TTS provider streams, audio goes out per chunk, not per segment."""
+
+    def _turn(self):
+        return [
+            ScriptedTurn(
+                events=[
+                    "Okay, so here is the first sentence. ",
+                    ("new_section", {"title": "Part 2"}),
+                    "And a second one to finish up here.",
+                ]
+            )
+        ]
+
+    def _session(self, tts):
+        adapter = RecordingAdapter()
+        return (
+            TutorSession(persona=_persona(), llm=FakeLLM(self._turn()), tts=tts, channel=adapter),
+            adapter,
+        )
+
+    async def test_streaming_provider_is_preferred(self):
+        tts = FakeStreamingTTS()
+        session, _ = self._session(tts)
+        await session.handle_transcript("go")
+        assert tts.stream_calls > 0, "the session used the blocking path"
+
+    async def test_audio_arrives_in_more_pieces_than_segments(self):
+        """The whole point — chunks flow before the segment finishes."""
+        blocking = FakeTTS()
+        streaming = FakeStreamingTTS(chunks=4)
+
+        blocking_session, blocking_adapter = self._session(blocking)
+        await blocking_session.handle_transcript("go")
+        streaming_session, streaming_adapter = self._session(streaming)
+        await streaming_session.handle_transcript("go")
+
+        assert len(streaming_adapter.audio) > len(blocking_adapter.audio)
+
+    async def test_cue_timings_match_the_blocking_path(self):
+        """Streaming must not change where actions land."""
+        blocking_session, blocking_adapter = self._session(FakeTTS())
+        await blocking_session.handle_transcript("go")
+        streaming_session, streaming_adapter = self._session(FakeStreamingTTS())
+        await streaming_session.handle_transcript("go")
+
+        assert [f["cueMs"] for f in streaming_adapter.frames] == [
+            f["cueMs"] for f in blocking_adapter.frames
+        ]
+
+    async def test_chunks_without_alignment_are_tolerated(self):
+        """The real API interleaves audio-only chunks; they must not corrupt timing."""
+        tts = FakeStreamingTTS(chunks=3, silent_chunk_every=1)  # every other chunk silent
+        session, adapter = self._session(tts)
+        result = await session.handle_transcript("go")
+        assert result.actions
+        assert adapter.frames
+
+    async def test_alignment_mismatch_degrades_instead_of_crashing(self):
+        """Losing alignment costs cue anchoring, not the lesson."""
+
+        class TruncatingTTS(FakeStreamingTTS):
+            async def synthesize_stream(self, text, *, voice_id, model):
+                async for chunk in super().synthesize_stream(
+                    text[:-3], voice_id=voice_id, model=model
+                ):
+                    yield chunk
+
+        session, adapter = self._session(TruncatingTTS())
+        result = await session.handle_transcript("go")
+        # Speech still happened; actions fall back to end-of-audio rather than raising.
+        assert adapter.audio
+        assert result.speech_text
+
+    async def test_avatar_receives_every_chunk(self):
+        avatar = FakeAvatar()
+        adapter = RecordingAdapter()
+        session = TutorSession(
+            persona=_persona(),
+            llm=FakeLLM(self._turn()),
+            tts=FakeStreamingTTS(chunks=4),
+            channel=adapter,
+            avatar=avatar,
+        )
+        await session.handle_transcript("go")
+        assert len(avatar.audio_chunks) == len(adapter.audio)

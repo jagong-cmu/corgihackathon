@@ -984,6 +984,18 @@ wheels = [
 ]
 
 [[package]]
+name = "livekit-plugins-simli"
+version = "1.6.7"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "livekit-agents" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/e8/5d/65c3078537baf74c61489a7c475f7720fe6f11ab0b4d69ba3460550fa702/livekit_plugins_simli-1.6.7.tar.gz", hash = "sha256:1643ac380d552addaf45b9af3d9975f74f1144b9d80fb4737bd80a5ab9b48424", size = 5197, upload-time = "2026-07-25T02:06:33.017Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/4d/72/b5c4f03b4e00e9f413605ce37baec19b7b8aad1701a01b2c3c416a82bc82/livekit_plugins_simli-1.6.7-py3-none-any.whl", hash = "sha256:9c620f130ee5fcecc5f5085b64685bf3003b96028739ef679a53ed2e651cc885", size = 5277, upload-time = "2026-07-25T02:06:31.986Z" },
+]
+
+[[package]]
 name = "livekit-protocol"
 version = "1.1.21"
 source = { registry = "https://pypi.org/simple" }
@@ -2077,6 +2089,7 @@ elevenlabs = [
 livekit = [
     { name = "livekit-agents" },
     { name = "livekit-plugins-elevenlabs" },
+    { name = "livekit-plugins-simli" },
 ]
 
 [package.dev-dependencies]
@@ -2093,6 +2106,7 @@ requires-dist = [
     { name = "jsonschema", specifier = ">=4.23" },
     { name = "livekit-agents", marker = "extra == 'livekit'", specifier = ">=0.12" },
     { name = "livekit-plugins-elevenlabs", marker = "extra == 'livekit'", specifier = ">=0.7" },
+    { name = "livekit-plugins-simli", marker = "extra == 'livekit'", specifier = ">=1.6.7" },
     { name = "pydantic", specifier = ">=2.9" },
     { name = "pyyaml", specifier = ">=6.0" },
 ]

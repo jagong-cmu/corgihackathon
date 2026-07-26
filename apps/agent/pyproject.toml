@@ -14,7 +14,11 @@ dependencies = [
 [project.optional-dependencies]
 anthropic = ["anthropic>=0.69"]
 elevenlabs = ["httpx>=0.27"]
-livekit = ["livekit-agents>=0.12", "livekit-plugins-elevenlabs>=0.7"]
+livekit = [
+    "livekit-agents>=0.12",
+    "livekit-plugins-elevenlabs>=0.7",
+    "livekit-plugins-simli>=1.6.7",
+]
 
 [project.scripts]
 tutor = "tutor_agent.cli:main"

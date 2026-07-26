@@ -87,3 +87,71 @@ def test_satisfies_the_channel_adapter_protocol():
 
     adapter, _ = _adapter()
     assert isinstance(adapter, ChannelAdapter)
+
+
+class TestSimliAvatar:
+    """The avatar satisfies our own protocol — no AgentSession involved."""
+
+    def _avatar(self):
+        from tutor_agent.providers.simli_avatar import SimliAvatar, SimliConfig
+
+        room = MagicMock()
+        room.name = "test-room"
+        return SimliAvatar(
+            config=SimliConfig(api_key="k", face_id="f"),
+            room=room,
+            local_identity="agent",
+            livekit_url="wss://x",
+            livekit_api_key="key",
+            livekit_api_secret="secret",
+        )
+
+    def test_satisfies_the_avatar_provider_protocol(self):
+        from tutor_agent.core.session import AvatarProvider
+
+        assert isinstance(self._avatar(), AvatarProvider)
+
+    def test_inactive_until_started(self):
+        """A failed start must degrade to voice-only, not to silence."""
+        assert self._avatar().is_active is False
+
+    async def test_push_audio_before_start_is_a_noop(self):
+        avatar = self._avatar()
+        await avatar.push_audio(b"\x00\x01")  # must not raise
+
+    async def test_pause_clears_the_buffer(self):
+        """Barge-in: stop lip-syncing a sentence the learner interrupted."""
+        avatar = self._avatar()
+        output = MagicMock()
+        avatar._output = output
+        await avatar.pause()
+        output.clear_buffer.assert_called_once()
+
+    async def test_stop_flushes_and_deactivates(self):
+        avatar = self._avatar()
+        avatar._output = MagicMock()
+        avatar._active = True
+        await avatar.stop()
+        assert avatar.is_active is False
+
+    def test_config_payload_pairs_face_and_emotion(self):
+        from tutor_agent.providers.simli_avatar import DEFAULT_EMOTION_ID, SimliConfig
+
+        payload = SimliConfig(api_key="k", face_id="myface").to_payload()
+        assert payload["faceId"] == f"myface/{DEFAULT_EMOTION_ID}"
+        assert payload["handleSilence"] is True
+
+
+class TestWorkerConfig:
+    def test_vad_is_tuned_well_below_the_plugin_default(self):
+        """The plugin defaults to 2500ms of silence — more than the whole budget."""
+        from tutor_agent.adapters.worker import VAD_OPTIONS
+
+        assert VAD_OPTIONS["min_silence_duration_ms"] <= 1000
+
+    def test_stt_and_output_rates_are_distinct(self):
+        from tutor_agent.adapters.realtime import SAMPLE_RATE
+        from tutor_agent.adapters.worker import STT_SAMPLE_RATE
+
+        assert STT_SAMPLE_RATE == 16_000
+        assert SAMPLE_RATE == 48_000

@@ -17,16 +17,40 @@ import os
 import time
 
 from livekit import agents, rtc
+from livekit.plugins import elevenlabs as lk_elevenlabs
 
 from ..core.session import SessionConfig, TutorSession
 from ..persona import get_persona
 from ..providers.anthropic_llm import AnthropicLLM
 from ..providers.elevenlabs import ElevenLabsTTS
+from ..providers.simli_avatar import (
+    AVATAR_IDENTITY,
+    SIMLI_SAMPLE_RATE,
+    SimliAvatar,
+    SimliConfig,
+)
 from .realtime import CANVAS_TOPIC, NUM_CHANNELS, SAMPLE_RATE, LiveKitAdapter
 
 log = logging.getLogger("tutor.worker")
 
 DEFAULT_PERSONA = os.environ.get("TUTOR_PERSONA", "ada")
+
+# Scribe v2 Realtime input rate. Distinct from SAMPLE_RATE, which is the 48kHz
+# output rate we publish at.
+STT_SAMPLE_RATE = 16_000
+
+# The single biggest latency knob in the whole loop, and it isn't in the model.
+# The plugin defaults to min_silence_duration_ms=2500 / vad_silence_threshold_secs=1.5,
+# which makes every turn wait 2.5s of silence before finalizing — more than the
+# entire 1.2s budget, spent doing nothing.
+#
+# 600ms is a tradeoff, not a free win: too low and a learner pausing mid-thought
+# gets cut off. Worth re-testing at 600/900/1200 with real speech.
+VAD_OPTIONS = {
+    "min_silence_duration_ms": 600,
+    "vad_silence_threshold_secs": 0.5,
+    "min_speech_duration_ms": 250,
+}
 
 
 async def entrypoint(ctx: agents.JobContext) -> None:
@@ -46,10 +70,33 @@ async def entrypoint(ctx: agents.JobContext) -> None:
     session = TutorSession(
         persona=persona,
         llm=AnthropicLLM(model="claude-sonnet-5", effort="low"),
-        tts=ElevenLabsTTS(api_key=os.environ["ELEVENLABS_API_KEY"]),
+        tts=ElevenLabsTTS(
+            api_key=os.environ["ELEVENLABS_API_KEY"],
+            # PCM at LiveKit's native rate — mp3 into an AudioSource is noise.
+            output_format=f"pcm_{SAMPLE_RATE}",
+        ),
         channel=adapter,
         config=SessionConfig(),
     )
+
+    stt = lk_elevenlabs.STT(
+        use_realtime=True,
+        sample_rate=STT_SAMPLE_RATE,
+        server_vad=VAD_OPTIONS,
+    )
+
+    avatar = await _maybe_start_avatar(ctx, persona)
+    if avatar is not None and avatar.is_active:
+        # Simli republishes the audio it receives, so publishing to our own
+        # track too would play everything twice, slightly offset. Hand audio to
+        # the avatar only, and re-request TTS at Simli's ingest rate.
+        adapter.audio_source = None
+        session.avatar = avatar
+        session.tts = ElevenLabsTTS(
+            api_key=os.environ["ELEVENLABS_API_KEY"],
+            output_format=f"pcm_{SIMLI_SAMPLE_RATE}",
+        )
+        log.info("avatar active — audio routed through Simli at %dHz", SIMLI_SAMPLE_RATE)
 
     turn_lock = asyncio.Lock()
     speech_ended_at: float | None = None
@@ -101,25 +148,50 @@ async def entrypoint(ctx: agents.JobContext) -> None:
     ) -> None:
         if track.kind != rtc.TrackKind.KIND_AUDIO:
             return
+        if participant.identity == AVATAR_IDENTITY:
+            # The avatar publishes audio on our behalf; transcribing it would
+            # make the tutor answer itself.
+            return
         asyncio.create_task(_transcribe(track))
 
     async def _transcribe(track: rtc.Track) -> None:
-        """Stream the learner's audio through STT and drive turns.
+        """Stream the learner's audio through Scribe v2 and drive turns."""
+        stream = stt.stream()
 
-        NOTE: this is the one piece still to wire. livekit-plugins-elevenlabs
-        exposes Scribe v2 as an STT node; drop it in here, and on each final
-        transcript:
+        async def pump() -> None:
+            audio = rtc.AudioStream(track, sample_rate=STT_SAMPLE_RATE, num_channels=1)
+            async for event in audio:
+                stream.push_frame(event.frame)
 
-            nonlocal speech_ended_at
+        pump_task = asyncio.create_task(pump())
+        try:
+            async for event in stream:
+                await _on_speech_event(event)
+        finally:
+            pump_task.cancel()
+            await stream.aclose()
+
+    async def _on_speech_event(event: agents.stt.SpeechEvent) -> None:
+        nonlocal speech_ended_at
+
+        if event.type == agents.stt.SpeechEventType.START_OF_SPEECH:
+            # Barge-in fires HERE, not on the final transcript. Waiting for
+            # finalization means the tutor keeps talking over the learner for
+            # the whole VAD window.
+            await session.barge_in()
+
+        elif event.type == agents.stt.SpeechEventType.END_OF_SPEECH:
+            # The budget clock (§4) starts when the learner stops talking.
             speech_ended_at = time.perf_counter()
-            await session.barge_in()       # kill the previous turn's cues
-            asyncio.create_task(run_turn(text))
 
-        Barge-in must fire on the FIRST interim transcript, not the final one —
-        waiting for finalization means the tutor talks over the learner for
-        several hundred milliseconds.
-        """
-        log.warning("STT not wired yet — see _transcribe in %s", __file__)
+        elif event.type == agents.stt.SpeechEventType.FINAL_TRANSCRIPT:
+            text = event.alternatives[0].text.strip() if event.alternatives else ""
+            if not text:
+                return
+            log.info("learner: %s", text)
+            # Not awaited: the STT loop must keep consuming so barge-in during
+            # the tutor's reply still registers.
+            asyncio.create_task(run_turn(text))
 
 
 def main() -> None:
@@ -132,3 +204,34 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+
+async def _maybe_start_avatar(ctx: agents.JobContext, persona) -> SimliAvatar | None:
+    """Start the avatar if the persona wants one and credentials are present.
+
+    Returns None rather than raising: a missing key or a Simli outage should
+    degrade the session to voice-only, not end it.
+    """
+    if persona.avatar.provider != "simli":
+        return None
+
+    api_key = os.environ.get("SIMLI_API_KEY")
+    face_id = persona.avatar.avatar_ref or os.environ.get("SIMLI_FACE_ID")
+    if not api_key or not face_id:
+        log.info("avatar disabled — set SIMLI_API_KEY and SIMLI_FACE_ID to enable")
+        return None
+
+    avatar = SimliAvatar(
+        config=SimliConfig(api_key=api_key, face_id=face_id),
+        room=ctx.room,
+        local_identity=ctx.local_participant_identity,
+        livekit_url=os.environ["LIVEKIT_URL"],
+        livekit_api_key=os.environ["LIVEKIT_API_KEY"],
+        livekit_api_secret=os.environ["LIVEKIT_API_SECRET"],
+    )
+    try:
+        await avatar.start(avatar_ref=face_id)
+    except Exception:
+        log.exception("avatar failed to start — continuing voice-only")
+        return None
+    return avatar

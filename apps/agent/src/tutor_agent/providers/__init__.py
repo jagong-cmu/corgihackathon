@@ -1,9 +1,11 @@
 from .base import (
+    AudioChunk,
     AvatarProvider,
     Chunk,
     LLMProvider,
     RetrievalProvider,
     StreamEvent,
+    StreamingTTSProvider,
     STTProvider,
     SynthesisResult,
     TextDelta,
@@ -12,21 +14,32 @@ from .base import (
     TTSProvider,
     TurnEnd,
 )
-from .fakes import FakeAvatar, FakeLLM, FakeRetrieval, FakeSTT, FakeTTS, ScriptedTurn
+from .fakes import (
+    FakeAvatar,
+    FakeLLM,
+    FakeRetrieval,
+    FakeStreamingTTS,
+    FakeSTT,
+    FakeTTS,
+    ScriptedTurn,
+)
 
 __all__ = [
+    "AudioChunk",
     "AvatarProvider",
     "Chunk",
     "FakeAvatar",
     "FakeLLM",
     "FakeRetrieval",
     "FakeSTT",
+    "FakeStreamingTTS",
     "FakeTTS",
     "LLMProvider",
     "RetrievalProvider",
     "STTProvider",
     "ScriptedTurn",
     "StreamEvent",
+    "StreamingTTSProvider",
     "SynthesisResult",
     "TTSProvider",
     "TextDelta",

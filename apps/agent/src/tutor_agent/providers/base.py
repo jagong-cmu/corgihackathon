@@ -9,9 +9,13 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass
-from typing import Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
-from ..core.cue import CharacterTimings
+if TYPE_CHECKING:
+    # Annotation-only. A runtime import here would form a cycle:
+    #   providers.base -> core (package __init__) -> core.session -> providers.base
+    # `from __future__ import annotations` keeps the dataclass field lazy.
+    from ..core.cue import CharacterTimings
 
 # ---------------------------------------------------------------------------
 # LLM
@@ -90,6 +94,35 @@ class SynthesisResult:
 @runtime_checkable
 class TTSProvider(Protocol):
     async def synthesize(self, text: str, *, voice_id: str, model: str) -> SynthesisResult: ...
+
+
+@dataclass(frozen=True)
+class AudioChunk:
+    """One chunk of a streamed synthesis.
+
+    `characters` may be empty — some chunks carry audio with no alignment.
+    Character times are ABSOLUTE across the whole segment, not relative to this
+    chunk, so a consumer concatenates the arrays without offset arithmetic.
+    """
+
+    audio: bytes
+    characters: str
+    start_ms: list[int]
+    end_ms: list[int]
+
+
+@runtime_checkable
+class StreamingTTSProvider(Protocol):
+    """Optional. A TTS provider that can emit audio before synthesis finishes.
+
+    The session prefers this when available: pushing audio per chunk rather than
+    per segment is the difference between ~1s and ~330ms to first sound.
+    Providers that don't implement it still work via TTSProvider.
+    """
+
+    def synthesize_stream(
+        self, text: str, *, voice_id: str, model: str
+    ) -> AsyncIterator[AudioChunk]: ...
 
 
 # ---------------------------------------------------------------------------

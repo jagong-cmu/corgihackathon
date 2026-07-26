@@ -26,6 +26,7 @@ from ..providers.base import (
     AvatarProvider,
     LLMProvider,
     RetrievalProvider,
+    StreamingTTSProvider,
     TextDelta,
     ToolCall,
     TTSProvider,
@@ -33,7 +34,7 @@ from ..providers.base import (
 )
 from .channel import ChannelAdapter
 from .chunking import SentenceChunker
-from .cue import CueQueue, TimedAction, TurnTimeline
+from .cue import CharacterTimings, CueQueue, TimedAction, TurnTimeline
 from .protocol import canvas_tool_definitions, validate_action
 
 log = logging.getLogger(__name__)
@@ -259,18 +260,62 @@ class TutorSession:
             await self.channel.send_action(turn_id, action)
 
     async def _speak_segment(self, text: str, timeline: TurnTimeline) -> None:
-        """Synthesize one sentence and push its audio immediately."""
+        """Synthesize one sentence and push its audio as soon as it exists."""
         if self.persona.voice is None:
             raise ValueError(
                 f"persona {self.persona.id!r} has no voice configured but the channel streams audio"
             )
-        result = await self.tts.synthesize(
-            text, voice_id=self.persona.voice.voice_id, model=self.persona.voice.model
-        )
-        timeline.attach_timings(result.timings)
-        await self.channel.send_audio(result.audio)
+        voice_id = self.persona.voice.voice_id
+        model = self.persona.voice.model
+
+        if isinstance(self.tts, StreamingTTSProvider):
+            await self._speak_streaming(text, timeline, voice_id=voice_id, model=model)
+        else:
+            result = await self.tts.synthesize(text, voice_id=voice_id, model=model)
+            timeline.attach_timings(result.timings)
+            await self._push_audio(result.audio)
+
+    async def _speak_streaming(
+        self, text: str, timeline: TurnTimeline, *, voice_id: str, model: str
+    ) -> None:
+        """Push each chunk's audio the moment it arrives.
+
+        Timings attach once the segment completes rather than per chunk: cue
+        resolution needs the segment's full alignment, and since segments are
+        sentence-sized the wait is short. The latency that matters is in the
+        audio, which is already flowing.
+        """
+        characters: list[str] = []
+        starts: list[int] = []
+        ends: list[int] = []
+
+        async for chunk in self.tts.synthesize_stream(text, voice_id=voice_id, model=model):
+            if chunk.audio:
+                await self._push_audio(chunk.audio)
+            # Chunks with audio but no alignment are normal; skip them here.
+            if chunk.characters:
+                characters.append(chunk.characters)
+                starts.extend(chunk.start_ms)
+                ends.extend(chunk.end_ms)
+
+        joined = "".join(characters)
+        if joined != text:
+            # Losing alignment means losing cue timing for this segment, but the
+            # audio already played — degrade to unanchored rather than crash.
+            log.warning(
+                "alignment mismatch in %s: sent %d chars, aligned %d. "
+                "Cues in this segment will be unanchored.",
+                timeline.turn_id,
+                len(text),
+                len(joined),
+            )
+            return
+        timeline.attach_timings(CharacterTimings(characters=joined, start_ms=starts, end_ms=ends))
+
+    async def _push_audio(self, audio: bytes) -> None:
+        await self.channel.send_audio(audio)
         if self.avatar is not None:
-            await self.avatar.push_audio(result.audio)
+            await self.avatar.push_audio(audio)
 
     # -- lifecycle ----------------------------------------------------------
 

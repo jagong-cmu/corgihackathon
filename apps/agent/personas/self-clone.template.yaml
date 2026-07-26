@@ -69,9 +69,10 @@ voice:
   stability: 0.5
   similarity_boost: 0.75
 
-# LemonSlice: a single photo, no training (§3).
+# Simli: real-time avatar, free tier, LiveKit-native (§3).
+# avatar_ref is the Simli face_id.
 avatar:
-  provider: lemonslice
+  provider: simli
   avatar_ref: CHANGEME
 
 consent:
