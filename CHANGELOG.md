@@ -23,6 +23,6 @@ Format: [Keep a Changelog](https://keepachangelog.com/) · versions are `MAJOR.M
   a declared voice can't be rung) and unexpected fields are never exposed.
 
 ### Added
-- Tutor roster guardrails (`npm run test:tutors`): 25 checks keeping the
+- Tutor roster guardrails (`npm run test:tutors`): 24 checks keeping the
   client fallback list, the served library, and the production route in
   lockstep — including a live boot of the production server.

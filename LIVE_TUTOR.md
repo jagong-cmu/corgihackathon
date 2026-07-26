@@ -1,12 +1,13 @@
 # Live voice tutor — how to run it
 
 The frontend now hosts a **live voice session** with the tutor agent: pick a
-tutor on the left of the desk, press *Start session*, and talk. The tutor
-listens (STT), answers in its persona's cloned/library voice, supports
-barge-in, and shows a talking-head avatar when the persona has one. The
-**Tutors** button in the header opens a builder for creating custom tutors —
-identity, teaching style, few-shot exchanges, a voice (library pick or clone),
-and an avatar.
+tutor from the **sidebar** (hamburger, top-left — the sidebar is the only
+place tutors are picked), press *Start session* on the tutor card, and talk.
+The tutor listens (STT), answers in its persona's cloned/library voice,
+supports barge-in, and shows a talking-head avatar when the persona has one.
+*Manage voice tutors* in the sidebar opens a builder for creating custom
+tutors — identity, teaching style, few-shot exchanges, a voice (library pick
+or clone), and an avatar.
 
 **The whiteboard is now wired in.** The agent drives the Chalk board over the
 `canvas` data topic with two actions: `present_visual` (a full VisualSpec,
@@ -81,9 +82,9 @@ plan-gated) is reported in the modal and finishable later in the Tutors panel.
 
 **The detailed way (the Tutors panel).**
 
-1. *Create & manage voice tutors* (under the tutor card) → fill in the *New
-   tutor* form. Few-shot exchanges are what make the persona stick — three or
-   more real-sounding turns.
+1. *Manage voice tutors* (in the sidebar, right under *Create a new tutor*)
+   → fill in the *New tutor* form. Few-shot exchanges are what make the
+   persona stick — three or more real-sounding turns.
 2. In the tutor's row: **Voice** → pick a library voice (preview first) or
    upload 1–2 min of clean speech to clone (plan-gated; the UI checks).
    *A session can't start for a tutor without a voice.*
@@ -91,9 +92,11 @@ plan-gated) is reported in the modal and finishable later in the Tutors panel.
    worker hands the bytes to LemonSlice at session start, so no public URL is
    needed), or point at a Simli face ID / LemonSlice agent ID / public photo
    URL.
-4. Close the panel — every tutor with a voice appears in the tutor card's
-   dropdown and in the sidebar roster. Picking one makes them *the* tutor
-   (card, greeting, whiteboard); **Start session** brings them live in place.
+4. Close the panel — every tutor with a voice appears in the sidebar roster
+   (the card carries no picker of its own). Picking one makes them *the*
+   tutor (card, greeting, whiteboard); **Start session** brings them live in
+   place. Seating a whiteboard-only tutor (like Trudy) shows a hint on the
+   card pointing back to the sidebar.
 
 ## Degradation map (nothing here hard-fails)
 
@@ -101,7 +104,7 @@ plan-gated) is reported in the modal and finishable later in the Tutors panel.
 |---|---|
 | LiveKit keys | Start button disabled with a setup hint |
 | agent worker not running | you join the room; stage shows "waiting for the tutor agent to join" |
-| persona API / Postgres | built-in tutors (`ada`, `coach-rios`) only; builder panel explains |
+| persona API / Postgres | built-in tutors (`ada`, `coach-rios`, `nico`) only; builder panel explains. Nico — the default seat — has his persona in the store, so he lists but can't hold a session without it |
 | avatar vendor key | voice-only session (worker logs it, keeps going) |
 | mic permission denied | listen-only session with a visible warning |
 
@@ -113,8 +116,14 @@ client is identical in dev and prod):
 
 - `POST /api/live/session` — LiveKit room + learner token (needs secrets)
 - `GET /api/live/health` — is LiveKit configured on this deployment?
-- `GET /api/live/tutors` — picker list; override with a `TUTOR_LIBRARY` JSON
-  env var, defaults in `server/tutorLibrary.ts`
+- `GET /api/live/tutors` — the sidebar's roster; override with a
+  `TUTOR_LIBRARY` JSON env var, defaults in `api/_lib/tutorLibrary.ts`.
+  Entries need `id` and `name`; everything else defaults safely —
+  `hasVoice: false` (an un-voiced tutor can't be rung) and
+  `avatarProvider: "none"` — and unexpected fields are dropped before
+  serving, so nothing an operator puts in the env var reaches clients
+  verbatim. An entry missing `id`/`name`, or invalid JSON, falls back to
+  the default list.
 
 Setup: in the Vercel project → Settings → Environment Variables, add
 `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET` (same values as
@@ -122,6 +131,15 @@ Setup: in the Vercel project → Settings → Environment Variables, add
 (a laptop is fine — it dials out to LiveKit Cloud), with `DATABASE_URL` set so
 custom tutors resolve. Visitors anywhere → Vercel page → LiveKit Cloud room →
 your worker joins with the persona named in the room metadata.
+
+Not on Vercel? The self-hosted production server (`server/prod.ts`) serves
+the same three endpoints, `/api/live/tutors` included. Run it with
+`npm run build && npm start` (the Dockerfile / render.yaml deploy path does
+the same). It listens on every interface by default; set a `HOST` env var
+(e.g. `HOST=127.0.0.1`) to pin one. `npm run test:tutors` guards this whole surface — it checks the
+client's fallback roster, the served library (including `TUTOR_LIBRARY`
+edge cases), and boots the prod server on a loopback port to hit the route
+live. No browser, no keys.
 
 The Tutors *builder* panel needs the full local stack (apps/api + Postgres);
 on Vercel it explains that instead of half-working.
