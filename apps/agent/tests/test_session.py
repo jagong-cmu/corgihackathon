@@ -479,9 +479,306 @@ class TestPromptAssembly:
         session.student_events([{"kind": "drew", "shapeIds": ["shape:abc"]}])
         await session.handle_transcript("why is this wrong?")
 
-        rendered = " ".join(m["content"] for m in llm.calls[0]["messages"])
+        # The last few-shot message carries its cache mark as a block list, so
+        # content is either a plain string or [{"type": "text", "text": ...}].
+        def _text(content) -> str:
+            if isinstance(content, str):
+                return content
+            return " ".join(block.get("text", "") for block in content)
+
+        rendered = " ".join(_text(m["content"]) for m in llm.calls[0]["messages"])
         assert "drew" in rendered
         assert "shape:abc" in rendered
+
+
+class TestPromptCaching:
+    """The prompt prefix must stay byte-stable across turns, or every turn
+    re-processes the whole conversation and the learner hears it as a pause."""
+
+    async def test_last_few_shot_message_carries_the_cache_mark(self):
+        llm = FakeLLM([ScriptedTurn(events=["Mm."])])
+        session = TutorSession(
+            persona=_persona("ada"), llm=llm, tts=FakeTTS(), channel=RecordingAdapter()
+        )
+        await session.handle_transcript("hello")
+
+        messages = llm.calls[0]["messages"]
+        few_shot = [m for m in messages if isinstance(m["content"], list)]
+        assert len(few_shot) == 1, "exactly one few-shot message carries the mark"
+        block = few_shot[0]["content"][-1]
+        assert block["cache_control"] == {"type": "ephemeral"}
+
+    async def test_history_replays_the_retrieval_augmented_content(self):
+        """Turn 2's history must contain byte-for-byte what turn 1 sent —
+        transcript alone would diverge from the cached prefix at turn 1's
+        user message and forfeit the whole conversation cache."""
+        retrieval = FakeRetrieval(
+            [Chunk(chunk_id="c1", text="p = mv", uri="notes.pdf", score=0.9)], latency_ms=0
+        )
+        llm = FakeLLM([ScriptedTurn(events=["Momentum."]), ScriptedTurn(events=["Yes."])])
+        session = TutorSession(
+            persona=_persona("ada"),
+            llm=llm,
+            tts=FakeTTS(),
+            channel=RecordingAdapter(),
+            retrieval=retrieval,
+        )
+        await session.handle_transcript("what's momentum")
+        await session.handle_transcript("go on")
+
+        first_sent = llm.calls[0]["messages"][-1]["content"]
+        assert "p = mv" in first_sent
+        replayed = [m["content"] for m in llm.calls[1]["messages"]]
+        assert first_sent in replayed
+
+    async def test_history_trims_in_blocks_not_per_turn(self):
+        """A rolling window shifts the prefix every turn (a full cache miss);
+        block trimming keeps it stable for several turns between trims."""
+        turns = [ScriptedTurn(events=[f"Answer {i}."]) for i in range(8)]
+        session, _ = _session(turns, config=SessionConfig(max_history_turns=2))
+        llm = session.llm
+
+        lengths = []
+        for i in range(8):
+            await session.handle_transcript(f"question {i}")
+            lengths.append(len(llm.calls[i]["messages"]))
+
+        limit = 2 * 2
+        # History never exceeds the cap by more than the hysteresis block...
+        assert max(lengths) <= len(session._few_shot) + limit + 1
+        # ...and at least two consecutive turns saw history GROW rather than
+        # roll, which is what keeps the prefix byte-stable between trims.
+        assert any(b == a + 2 for a, b in zip(lengths, lengths[1:], strict=False))
+
+    async def test_trim_lands_on_a_user_message_boundary(self):
+        """At the default config the naive cut count is odd, which would leave
+        history opening with an orphaned assistant half-answer — the model
+        reads that as the tutor answering a question nobody asked."""
+        turns = [ScriptedTurn(events=[f"Answer {i}."]) for i in range(16)]
+        session, _ = _session(turns)  # default max_history_turns=12 → limit 24
+        for i in range(16):
+            await session.handle_transcript(f"question {i}")
+
+        assert session._history, "trim should keep recent turns, not empty history"
+        assert session._history[0]["role"] == "user"
+        assert len(session._history) <= 24
+
+
+class TestToolErrorFeedback:
+    """A rejected action must ride back to the model as an error and a valid
+    one must not — the model has to know when the board never mounted a spec,
+    or it narrates reveals of a visual the learner cannot see."""
+
+    async def test_invalid_action_writes_error_onto_the_event(self):
+        llm = FakeLLM([ScriptedTurn(events=["Look. ", ("equation", {"x": 1}), "More."])])
+        session = TutorSession(
+            persona=_persona(), llm=llm, tts=FakeTTS(), channel=RecordingAdapter()
+        )
+        await session.handle_transcript("go")
+
+        assert len(llm.tool_events) == 1
+        error = llm.tool_events[0].error
+        assert error is not None and error.startswith("Rejected")
+        assert "equation" in error
+
+    async def test_valid_action_leaves_error_unset(self):
+        llm = FakeLLM(
+            [ScriptedTurn(events=["Look. ", ("new_section", {"title": "A"}), "More."])]
+        )
+        session = TutorSession(
+            persona=_persona(), llm=llm, tts=FakeTTS(), channel=RecordingAdapter()
+        )
+        await session.handle_transcript("go")
+
+        assert len(llm.tool_events) == 1
+        assert llm.tool_events[0].error is None
+
+
+class TestTurnTelemetry:
+    async def test_timing_fields_populate_on_a_voiced_turn(self):
+        retrieval = FakeRetrieval([], latency_ms=0)
+        session, _ = _session([ScriptedTurn(events=["Hello there. "])], retrieval=retrieval)
+        result = await session.handle_transcript("hi")
+
+        assert result.llm_first_token_ms is not None and result.llm_first_token_ms >= 0
+        assert result.retrieval_ms is not None and result.retrieval_ms >= 0
+        assert result.first_audio_ms is not None
+
+    async def test_retrieval_ms_is_none_without_a_provider(self):
+        session, _ = _session([ScriptedTurn(events=["Hi. "])])
+        result = await session.handle_transcript("hi")
+        assert result.retrieval_ms is None
+
+
+class TestInterruptedTurnMemory:
+    """A barged-in turn keeps what it said; an unspoken one vanishes cleanly."""
+
+    async def test_partial_speech_survives_in_history(self):
+        """After a mid-speech barge-in, the next turn's prompt must contain
+        both the interrupted question and the half-answer the learner heard —
+        losing them is how the tutor forgets mid-lesson on every follow-up."""
+        llm = FakeLLM(
+            [
+                ScriptedTurn(events=["First sentence. ", "Second sentence. "]),
+                ScriptedTurn(events=["Follow-up answer."]),
+            ]
+        )
+        session = TutorSession(
+            persona=_persona(), llm=llm, tts=FakeTTS(), channel=RecordingAdapter()
+        )
+
+        real_synthesize = session.tts.synthesize
+        calls = 0
+
+        async def interrupt_then_synthesize(text: str, **kwargs):
+            nonlocal calls
+            calls += 1
+            if calls == 2:
+                await session.barge_in()
+            return await real_synthesize(text, **kwargs)
+
+        session.tts.synthesize = interrupt_then_synthesize
+
+        first = await session.handle_transcript("explain pythagoras")
+        assert first.cancelled
+        await session.handle_transcript("wait, show an example")
+
+        contents = [
+            m["content"] for m in llm.calls[1]["messages"] if isinstance(m["content"], str)
+        ]
+        assert "explain pythagoras" in contents
+        assert any("First sentence." in c and "interrupted" in c for c in contents)
+
+    async def test_unspoken_preempted_turn_leaves_no_history(self):
+        """preempt() hands the transcript back for folding into the next turn;
+        recording it in history too would double the question in the prompt."""
+        llm = FakeLLM([ScriptedTurn(events=["Answer one. "])])
+        adapter = RecordingAdapter()
+        session = TutorSession(persona=_persona(), llm=llm, tts=FakeTTS(), channel=adapter)
+
+        real_synthesize = session.tts.synthesize
+        leftover: list[str | None] = []
+
+        async def preempt_then_synthesize(text: str, **kwargs):
+            if not leftover:
+                # Before the first sentence's audio is pushed the turn has not
+                # spoken — exactly the split-VAD-final window preempt() covers.
+                leftover.append(await session.preempt())
+            return await real_synthesize(text, **kwargs)
+
+        session.tts.synthesize = preempt_then_synthesize
+
+        result = await session.handle_transcript("first question")
+
+        assert result.cancelled
+        assert leftover == ["first question"]
+        assert session._history == []
+        # And no orphan audio: the folded turn is about to re-answer this
+        # fragment, so playing the dead turn's sentence would double it.
+        assert adapter.audio == []
+
+    async def test_cancelled_turn_closes_the_llm_stream(self):
+        """Breaking out of a cancelled turn must close the provider stream —
+        an abandoned stream keeps generating server-side, burning the rate
+        limit the interrupting turn is about to need."""
+
+        state = {"closed_early": None}
+
+        class ClosingLLM(FakeLLM):
+            async def stream_turn(self, **kwargs):
+                exhausted = False
+                try:
+                    async for event in super().stream_turn(**kwargs):
+                        yield event
+                    exhausted = True
+                finally:
+                    state["closed_early"] = not exhausted
+
+        # Three sentences: sentence 2 completes (and synthesizes) while the
+        # stream still holds sentence 3, so the barge-in lands MID-stream —
+        # with only two, sentence 2 flushes in the tail after the stream
+        # already ran dry and nothing is left to close early.
+        llm = ClosingLLM(
+            [ScriptedTurn(events=["First sentence. ", "Second sentence. ", "Third sentence. "])]
+        )
+        session = TutorSession(
+            persona=_persona(), llm=llm, tts=FakeTTS(), channel=RecordingAdapter()
+        )
+
+        real_synthesize = session.tts.synthesize
+        calls = 0
+
+        async def interrupt_then_synthesize(text: str, **kwargs):
+            nonlocal calls
+            calls += 1
+            if calls == 2:
+                await session.barge_in()
+            return await real_synthesize(text, **kwargs)
+
+        session.tts.synthesize = interrupt_then_synthesize
+
+        result = await session.handle_transcript("go")
+
+        assert result.cancelled
+        assert state["closed_early"] is True
+
+
+class TestPrewarm:
+    async def test_prewarm_reaches_both_providers_with_the_real_prefix(self):
+        class WarmLLM(FakeLLM):
+            def __init__(self, turns):
+                super().__init__(turns)
+                self.prewarm_calls: list[dict] = []
+
+            async def prewarm(self, *, system, messages=(), tools=()):
+                self.prewarm_calls.append(
+                    {"system": system, "messages": list(messages), "tools": list(tools)}
+                )
+
+        class WarmTTS(FakeTTS):
+            def __init__(self):
+                super().__init__()
+                self.prewarmed = 0
+
+            async def prewarm(self):
+                self.prewarmed += 1
+
+        llm = WarmLLM([])
+        tts = WarmTTS()
+        session = TutorSession(
+            persona=_persona(), llm=llm, tts=tts, channel=RecordingAdapter()
+        )
+
+        await session.prewarm()
+
+        assert tts.prewarmed == 1
+        assert len(llm.prewarm_calls) == 1
+        call = llm.prewarm_calls[0]
+        # The warm-up must send the exact prefix real turns send (marks
+        # included) or it writes a cache entry no turn can ever read.
+        assert call["system"] == session._system
+        assert call["messages"] == session._few_shot
+        assert call["tools"] == session._tools
+
+    async def test_prewarm_is_a_noop_without_provider_support(self):
+        session, _ = _session([])
+        await session.prewarm()  # FakeLLM/FakeTTS lack prewarm — must not raise
+
+    async def test_prewarm_failure_never_takes_the_session_down(self):
+        class ExplodingTTS(FakeTTS):
+            async def prewarm(self):
+                raise RuntimeError("vendor down")
+
+        session = TutorSession(
+            persona=_persona(),
+            llm=FakeLLM([ScriptedTurn(events=["Still fine."])]),
+            tts=ExplodingTTS(),
+            channel=RecordingAdapter(),
+        )
+
+        await session.prewarm()  # swallowed and logged, never raised
+        result = await session.handle_transcript("hi")
+        assert result.speech_text == "Still fine."
 
 
 class TestVoiceRequired:
