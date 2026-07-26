@@ -207,3 +207,21 @@ class TestShippedPersonas:
     def test_bundled_personas_suppress_assistant_tics(self, persona_id: str):
         persona = load_persona_dir(DEFAULT_PERSONA_DIR)[persona_id]
         assert persona.never_does, "every persona should suppress at least one default tic"
+
+    def test_aayush_fallback_resolves_with_the_deployed_refs(self):
+        """aayush ships in both TS roster tiers (BUILTIN_TUTORS in
+        src/tutorApi.ts, DEFAULT_LIVE_TUTORS in api/_lib/tutorLibrary.ts)
+        under this exact id, so the worker's DB-outage fallback —
+        get_persona("aayush"), see adapters/worker.py:_load_persona — must
+        resolve it or a Postgres outage leaves a sidebar tutor that never
+        joins. Refs are pinned so the YAML copy can't drift from the store
+        row it mirrors (see the header comment in personas/aayush.yaml).
+        """
+        from tutor_agent.persona import get_persona
+
+        persona = get_persona("aayush")
+        assert persona.identity.name == "Aayush"
+        assert persona.voice is not None
+        assert persona.voice.voice_id == "CiAiUVHgs2xOAnkrUexg"
+        assert persona.avatar.provider == "lemonslice"
+        assert persona.avatar.avatar_ref == "agent_7b6dc282bebf1e66"

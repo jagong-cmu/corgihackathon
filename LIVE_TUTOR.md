@@ -104,7 +104,7 @@ plan-gated) is reported in the modal and finishable later in the Tutors panel.
 |---|---|
 | LiveKit keys | Start button disabled with a setup hint |
 | agent worker not running | you join the room; stage shows "waiting for the tutor agent to join" |
-| persona API / Postgres | built-in tutors (`ada`, `coach-rios`, `nico`) only; builder panel explains. Nico — the default seat — has his persona in the store, so he lists but can't hold a session without it |
+| persona API / Postgres | built-in tutors (`ada`, `coach-rios`, `nico`, `aayush`) only; builder panel explains. Nico and Aayush live canonically in the store, but each ships a YAML fallback with pinned voice/avatar refs (`apps/agent/personas/`), so even the default seat still holds sessions |
 | avatar vendor key | voice-only session (worker logs it, keeps going) |
 | mic permission denied | listen-only session with a visible warning |
 

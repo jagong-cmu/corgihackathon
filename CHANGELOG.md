@@ -3,6 +3,17 @@
 All notable changes to Chalk are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/) · versions are `MAJOR.MINOR.PATCH.MICRO`.
 
+## [0.1.2.0] - 2026-07-26
+
+### Added
+- Aayush joins the tutor roster everywhere: pick him in the sidebar and start
+  a voice session with his cloned ElevenLabs voice and LemonSlice avatar. He's
+  in the persona store, the worker's offline fallback, the deployed tutor
+  list, and the client's no-backend floor, so he shows up on every tier.
+- The roster guardrail suite and the agent's persona tests now pin Aayush's
+  voice and avatar references, so the fallback copy can't silently drift from
+  the store row.
+
 ## [0.1.1.0] - 2026-07-26
 
 ### Changed

@@ -8,7 +8,7 @@ providers use, so the whole loop is testable today.
 
 ```bash
 uv sync
-uv run pytest              # 75 tests
+uv run pytest              # 281 tests
 uv run tutor personas
 uv run tutor demo ada      # scripted turn + cue timeline
 uv run tutor show ada      # the compiled system prompt
