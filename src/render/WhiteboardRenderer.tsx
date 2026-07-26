@@ -15,11 +15,17 @@ import type {
   FreeformSceneContent,
   FunctionPlotContent,
   EquationContent,
+  VectorDiagramContent,
+  NumberLineContent,
 } from "../spec/visualSpec";
 import { useDrawSequence } from "./hooks/useDrawSequence";
 import { createMockVoiceDriver, type RevealApi } from "../voice/voiceInterface";
 import { FunctionPlot } from "./tracks/FunctionPlot";
 import { FreeformScene } from "./tracks/FreeformScene";
+import { VectorDiagram } from "./tracks/VectorDiagram";
+import { NumberLine } from "./tracks/NumberLine";
+import { AnimatedDiagram } from "./tracks/AnimatedDiagram";
+import type { AnimatedDiagramContent } from "../spec/animatedDiagram";
 import { EquationFallback } from "./tracks/EquationFallback";
 
 interface Props {
@@ -105,11 +111,34 @@ export function WhiteboardRenderer({
           state={seq}
         />
       );
+    case "vector_diagram":
+      return (
+        <VectorDiagram
+          content={spec.content as unknown as VectorDiagramContent}
+          drawSequence={spec.drawSequence}
+          state={seq}
+        />
+      );
+    case "number_line":
+      return (
+        <NumberLine
+          content={spec.content as unknown as NumberLineContent}
+          drawSequence={spec.drawSequence}
+          state={seq}
+        />
+      );
+    case "animated_diagram":
+      return (
+        <AnimatedDiagram
+          content={spec.content as unknown as AnimatedDiagramContent}
+          drawSequence={spec.drawSequence}
+          state={seq}
+        />
+      );
     case "equation":
       return <EquationFallback tex={(spec.content as unknown as EquationContent).tex} />;
     default:
-      // Known-but-unimplemented primitive (vector_diagram, geometry,
-      // number_line come in Phase 6) -> degrade gracefully.
+      // Known-but-unimplemented primitive (geometry comes later) -> degrade.
       return (
         <EquationFallback
           tex={fallbackTexFrom(rawSpec)}
