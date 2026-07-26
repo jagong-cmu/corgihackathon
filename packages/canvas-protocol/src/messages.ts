@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from "zod/v4";
 import { CanvasAction } from "./actions.js";
 import { PROTOCOL_VERSION, ShapeId } from "./common.js";
 

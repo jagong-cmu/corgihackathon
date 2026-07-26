@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from "zod/v4";
 
 /**
  * The analogy engine's template registry (§6.3). Adding a template must never

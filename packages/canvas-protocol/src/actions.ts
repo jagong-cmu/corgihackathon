@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from "zod/v4";
 import { ActionId, Bounds, Color, Point, ShapeId } from "./common.js";
 import { GraphSpec } from "./graph.js";
 import { SimSpec } from "./sim.js";

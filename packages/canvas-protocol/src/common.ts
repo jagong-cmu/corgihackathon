@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from "zod/v4";
 
 /**
  * Bumped on every schema change. Paired with an ADR in docs/adr/ per §13.

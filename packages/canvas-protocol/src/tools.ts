@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from "zod/v4";
 import { ACTION_REGISTRY, type ActionName } from "./actions.js";
 
 /**
