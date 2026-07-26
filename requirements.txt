@@ -1,6 +1,7 @@
 # Dependencies for the Vercel Python function api/tutor-api.py.
-# Both apps are local packages. Explicit `name @ file:` form: Vercel's
-# installer (uv) otherwise infers the package name from the directory
-# ("agent") and refuses when the metadata says tutor-agent.
-tutor-agent[elevenlabs,db] @ file:./apps/agent
-tutor-api @ file:./apps/api
+# Both apps are local packages. Explicit `name @ relative-path` form:
+# Vercel's installer (uv) infers the name from the directory for bare paths
+# ("agent" != tutor-agent) and mangles file:./ URLs into literal paths —
+# name @ ./path is the one spelling its resolver takes verbatim.
+tutor-agent[elevenlabs,db] @ ./apps/agent
+tutor-api @ ./apps/api
