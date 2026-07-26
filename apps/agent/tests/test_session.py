@@ -30,7 +30,7 @@ def _persona(persona_id: str = "ada"):
     return persona
 
 
-def _session(turns, *, adapter=None, avatar=None, retrieval=None, persona_id="ada"):
+def _session(turns, *, adapter=None, avatar=None, retrieval=None, persona_id="ada", config=None):
     adapter = adapter or RecordingAdapter()
     return (
         TutorSession(
@@ -40,10 +40,14 @@ def _session(turns, *, adapter=None, avatar=None, retrieval=None, persona_id="ad
             channel=adapter,
             avatar=avatar,
             retrieval=retrieval,
-            config=SessionConfig(),
+            config=config or SessionConfig(),
         ),
         adapter,
     )
+
+
+def _hard_barge() -> SessionConfig:
+    return SessionConfig(finish_sentence_on_barge_in=False)
 
 
 class TestBasicTurn:
@@ -173,30 +177,53 @@ class TestBargeIn:
         assert adapter.cancellations[-1] == ("t_0001", "barge_in")
         assert len(adapter.frames) == frames_before
 
-    async def test_barge_in_stops_audio_not_only_cues(self):
-        """Cancelling cues stops the arrows; audio is already in the transport.
+    async def test_default_barge_in_lets_the_sentence_finish(self):
+        """Finish-sentence mode: cancel the cues, never hard-cut the audio.
 
-        Stopping one without the other is the worst outcome: the board freezes
-        and the tutor keeps talking over the learner.
+        The sentence already in the transport drains and finishes — a mid-word
+        cut reads as a glitch, not as yielding the floor. The cancel_turn must
+        still go out so the board doesn't draw for speech that won't arrive.
         """
-        session, adapter = _session([ScriptedTurn(events=["Talking at length. "])])
+        avatar = FakeAvatar()
+        session, adapter = _session(
+            [ScriptedTurn(events=["Talking at length. "])], avatar=avatar
+        )
+        await session.handle_transcript("go")
+
+        await session.barge_in()
+
+        assert adapter.audio_stops == 0
+        assert avatar.interrupted == 0
+        assert adapter.cancellations[-1] == ("t_0001", "barge_in")
+
+    async def test_hard_barge_in_stops_audio_not_only_cues(self):
+        """Hard mode: cancelling cues stops the arrows; audio is already in
+        the transport, and stopping one without the other is the worst
+        outcome — the board freezes and the tutor keeps talking."""
+        session, adapter = _session(
+            [ScriptedTurn(events=["Talking at length. "])], config=_hard_barge()
+        )
         await session.handle_transcript("go")
 
         await session.barge_in()
 
         assert adapter.audio_stops == 1
 
-    async def test_barge_in_interrupts_the_avatar(self):
+    async def test_hard_barge_in_interrupts_the_avatar(self):
         avatar = FakeAvatar()
-        session, _ = _session([ScriptedTurn(events=["Talking. "])], avatar=avatar)
+        session, _ = _session(
+            [ScriptedTurn(events=["Talking. "])], avatar=avatar, config=_hard_barge()
+        )
         await session.handle_transcript("go")
 
         await session.barge_in()
 
         assert avatar.interrupted == 1
 
-    async def test_a_superseding_turn_also_stops_audio(self):
-        """The fast-follow-up path must behave like an explicit barge-in."""
+    async def test_a_superseding_turn_cancels_without_a_hard_cut(self):
+        """The fast-follow-up path behaves like a barge-in: in finish-sentence
+        mode that means cancel the old turn's cues and let its audio drain —
+        the new answer queues behind the finishing sentence."""
         avatar = FakeAvatar()
         session, adapter = _session(
             [
@@ -204,6 +231,23 @@ class TestBargeIn:
                 ScriptedTurn(events=["Second. "]),
             ],
             avatar=avatar,
+        )
+        await session.handle_transcript("first")
+        await session.handle_transcript("second")
+
+        assert adapter.audio_stops == 0
+        assert avatar.interrupted == 0
+        assert ("t_0001", "barge_in") in adapter.cancellations
+
+    async def test_a_superseding_turn_hard_stops_audio_in_hard_mode(self):
+        avatar = FakeAvatar()
+        session, adapter = _session(
+            [
+                ScriptedTurn(events=["First. "]),
+                ScriptedTurn(events=["Second. "]),
+            ],
+            avatar=avatar,
+            config=_hard_barge(),
         )
         await session.handle_transcript("first")
         await session.handle_transcript("second")

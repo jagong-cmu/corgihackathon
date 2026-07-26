@@ -40,6 +40,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
@@ -73,6 +74,13 @@ BLOB_REF_PREFIX = "blob:"
 # turn lock — the tutor goes permanently mute with a healthy-looking log.
 FIRST_PUSH_TIMEOUT_S = 30.0
 PUSH_TIMEOUT_S = 5.0
+
+# The avatar transport has no realtime backpressure: TTS outruns playout, so
+# without pacing, tens of seconds of audio pile up on the vendor's side. That
+# queue is invisible until an interruption — "finish the sentence" barge-in
+# would finish the paragraph. Cap how far pushes may run ahead of realtime;
+# playout is realtime anyway, so this adds no user-facing latency.
+PACE_LEAD_MS = 2000.0
 
 
 def load_blob_image(ref: str, *, dsn: str | None) -> Image.Image | None:
@@ -130,6 +138,11 @@ class LiveKitAvatar(ABC):
         self._output: DataStreamAudioOutput | None = None
         self._active = False
         self._pushed_once = False
+        # Pacing state: when the current run of speech started and how much
+        # audio has been pushed since, so push_audio can hold pushes to at
+        # most PACE_LEAD_MS ahead of realtime.
+        self._pace_started: float | None = None
+        self._pace_pushed_ms = 0.0
         # Same reframing the publish path needs, at the avatar's ingest rate.
         # A chunk ending mid-sample would be rejected by rtc.AudioFrame.
         self._splitter = PcmStreamSplitter(sample_rate=AVATAR_SAMPLE_RATE, num_channels=1)
@@ -194,12 +207,33 @@ class LiveKitAvatar(ABC):
         self._active = True
         log.info("%s avatar started (ref %s)", self.identity, avatar_ref or "default")
 
+    def _pace(self) -> float:
+        """Seconds to sleep before the next push so audio stays ≤PACE_LEAD_MS
+        ahead of realtime. Falling behind (a silent gap between turns) resets
+        the baseline instead of banking unlimited burst credit."""
+        now = time.monotonic()
+        if self._pace_started is None:
+            self._pace_started = now
+        ahead = self._pace_pushed_ms - (now - self._pace_started) * 1000
+        if ahead < 0:
+            self._pace_started = now
+            self._pace_pushed_ms = 0.0
+            return 0.0
+        if ahead > PACE_LEAD_MS:
+            return (ahead - PACE_LEAD_MS) / 1000
+        return 0.0
+
     async def push_audio(self, audio: bytes) -> None:
         if self._output is None or not audio:
             return
         timeout = PUSH_TIMEOUT_S if self._pushed_once else FIRST_PUSH_TIMEOUT_S
         try:
             for block in self._splitter.feed(audio):
+                delay = self._pace()
+                if delay > 0:
+                    await asyncio.sleep(delay)
+                if self._output is None:
+                    return  # demoted while we were pacing
                 await asyncio.wait_for(
                     self._output.capture_frame(
                         rtc.AudioFrame(
@@ -212,6 +246,7 @@ class LiveKitAvatar(ABC):
                     timeout=timeout,
                 )
                 self._pushed_once = True
+                self._pace_pushed_ms += self._splitter.frame_ms
                 timeout = PUSH_TIMEOUT_S
         except (asyncio.TimeoutError, TimeoutError):
             log.error(
@@ -245,11 +280,14 @@ class LiveKitAvatar(ABC):
                     samples_per_channel=len(tail) // 2,
                 )
             )
+            self._pace_pushed_ms += (len(tail) / 2) / AVATAR_SAMPLE_RATE * 1000
         self._output.flush()
 
     async def interrupt(self) -> None:
-        """Barge-in: drop queued audio so the face stops mid-sentence."""
+        """Hard barge-in: drop queued audio so the face stops mid-sentence."""
         self._splitter.reset()
+        self._pace_started = None
+        self._pace_pushed_ms = 0.0
         if self._output is not None:
             self._output.clear_buffer()
             # The receiver abandons the stream clear_buffer names — close our
@@ -267,6 +305,8 @@ class LiveKitAvatar(ABC):
         against a real invoice before choosing (§14).
         """
         self._splitter.reset()
+        self._pace_started = None
+        self._pace_pushed_ms = 0.0
         if self._output is not None:
             self._output.clear_buffer()
             self._output.flush()
@@ -277,6 +317,8 @@ class LiveKitAvatar(ABC):
         self._output = None
         self._active = False
         self._splitter.reset()
+        self._pace_started = None
+        self._pace_pushed_ms = 0.0
 
 
 # ---------------------------------------------------------------------------

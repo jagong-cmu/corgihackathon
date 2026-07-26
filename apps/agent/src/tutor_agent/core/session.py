@@ -90,6 +90,13 @@ class SessionConfig:
     """Force a flush past this so a model that runs on without punctuation
     can't stall audio indefinitely."""
 
+    finish_sentence_on_barge_in: bool = True
+    """How an interruption lands. True (the default): the tutor stops STARTING
+    sentences but the one being spoken drains and finishes — a hard mid-word
+    cut reads as a glitch, not as yielding the floor. False: queued audio is
+    killed instantly (the old behavior), for products where talk-over is worse
+    than the glitch."""
+
     toolset: str = "whiteboard"
     """Which board the client renders, and therefore which tools the model gets
     and which operating rules go in the system prompt:
@@ -387,8 +394,10 @@ class TutorSession:
             await self._speak_streaming(text, timeline, voice_id=voice_id, model=model)
         else:
             result = await self.tts.synthesize(text, voice_id=voice_id, model=model)
-            if not self._cues.should_emit(timeline.turn_id):
-                return  # barged in while synthesizing — the audio is dead
+            if not self._cues.should_emit(timeline.turn_id) and not (
+                self.config.finish_sentence_on_barge_in
+            ):
+                return  # hard barge-in while synthesizing — the audio is dead
             timeline.attach_timings(result.timings)
             await self._push_audio(result.audio)
 
@@ -407,11 +416,15 @@ class TutorSession:
         ends: list[int] = []
 
         async for chunk in self.tts.synthesize_stream(text, voice_id=voice_id, model=model):
-            if not self._cues.should_emit(timeline.turn_id):
-                # Barge-in landed mid-sentence: stop pushing NOW. Segmented
-                # avatar streams mean frames pushed after the interrupt open a
-                # fresh segment the avatar will happily play — the cancelled
-                # sentence's tail would audibly resume seconds later.
+            if not self._cues.should_emit(timeline.turn_id) and not (
+                self.config.finish_sentence_on_barge_in
+            ):
+                # HARD barge-in mid-sentence: stop pushing NOW. clear_buffer
+                # abandons the avatar's current stream, and frames pushed after
+                # the interrupt open a fresh segment the avatar would happily
+                # play — the cancelled sentence's tail would audibly resume
+                # seconds later. In finish-sentence mode nothing is cleared,
+                # so completing this sentence's push is exactly the point.
                 return
             if chunk.audio:
                 await self._push_audio(chunk.audio)
@@ -501,18 +514,22 @@ class TutorSession:
         return self._active_transcript
 
     async def _interrupt_output(self, turn_id: str, reason: str) -> None:
-        """Stop everything the learner can currently see or hear.
+        """Stop what the learner can currently see or hear from a dead turn.
 
-        Audio first, deliberately. Cancelling the turn only stops canvas
-        actions; audio already sits in the transport's playout buffer and in the
-        avatar's queue, and those are what the learner notices. Stopping cues
-        but not audio produces the worst version of this: the arrows freeze and
-        the tutor talks on over the interruption.
+        Two grades. finish_sentence_on_barge_in (the default) lets already-
+        synthesized speech drain so the tutor finishes the sentence being
+        spoken — a hard mid-word cut reads as a glitch — while the cancel
+        upstream stops any FURTHER sentence from starting, and the avatar
+        pacing (livekit_avatar PACE_LEAD_MS) bounds how much "already
+        synthesized" can be. The hard grade kills queued audio instantly.
+        Either way the cue cancel goes out, so the board never draws for
+        speech that won't arrive.
         """
-        if self.channel.capabilities.streams_audio:
-            await self.channel.stop_audio()
-        if self.avatar is not None:
-            await self.avatar.interrupt()
+        if not self.config.finish_sentence_on_barge_in:
+            if self.channel.capabilities.streams_audio:
+                await self.channel.stop_audio()
+            if self.avatar is not None:
+                await self.avatar.interrupt()
         await self.channel.cancel_turn(turn_id, reason)
 
     async def pause_avatar(self) -> None:
