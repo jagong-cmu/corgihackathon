@@ -5,8 +5,8 @@
  *     site) — present and speaking the current line aloud.
  *   - RIGHT: the whiteboard where the visual subsystem draws.
  *
- * The UI is generic: you drive the board by ASKING (typed question or a starter
- * prompt) — the shared LLM picks the right visual primitive (function plot,
+ * The UI is generic: you drive the board by ASKING a question — the shared LLM
+ * picks the right visual primitive (function plot,
  * vectors, number line, animated diagram, equation, or a freeform scene). The
  * hamburger (top-left) opens the sidebar for sessions, tutors, and materials.
  * "Full screen" drops the board into presenter mode with a tutor face-cam.
@@ -23,23 +23,7 @@ import { Avatar } from "./Avatar";
 import { useTutors } from "../tutors/TutorContext";
 import type { RevealApi } from "../voice/voiceInterface";
 import { askTutor, type TurnResponse } from "../api";
-import { LiveTutorStage } from "../live/LiveTutorStage";
-import { TutorsPanel } from "./TutorsPanel";
 import "./shell.css";
-
-/**
- * Generic, subject-agnostic starter prompts. These aren't hardcoded scenes —
- * each is sent through the normal Ask path, so the LLM chooses the primitive.
- * They double as the demo: the first three reproduce the math/vector/interval
- * visuals, the last two exercise animated + freeform explanations.
- */
-const STARTERS = [
-  "Graph x² and show the tangent at x = 1",
-  "Add the vectors a = (3, 1) and b = (1, 3)",
-  "Show the interval −1 < x ≤ 3 on a number line",
-  "Explain Newton's second law",
-  "Explain recursion in simple terms",
-];
 
 export function TutorShell() {
   const { activeTutor, openSidebar, sessionNonce } = useTutors();
@@ -55,12 +39,6 @@ export function TutorShell() {
   // Presenter mode: board fills the screen, the tutor becomes a face-cam bubble.
   const [presenting, setPresenting] = useState(false);
   const shellRef = useRef<HTMLDivElement>(null);
-
-  // Voice-tutor manager (backend personas — the tutors that can actually
-  // speak). Distinct from the sidebar roster, which styles the on-canvas
-  // tutor; the two will converge once created tutors get cloned voices.
-  const [voiceTutorsOpen, setVoiceTutorsOpen] = useState(false);
-  const [voiceTutorsVersion, setVoiceTutorsVersion] = useState(0);
 
   const greeting = `Hi, I'm ${activeTutor.name}. Ask me anything — I'll explain it on the board while I talk.`;
   const activeSpokenText = live ? live.spokenText : greeting;
@@ -156,7 +134,6 @@ export function TutorShell() {
             <BrandMark />
             <div className="brand-text">
               <div className="brand-name">Chalk</div>
-              <div className="brand-tag">a tutor that draws while it talks</div>
             </div>
           </div>
         </div>
@@ -201,24 +178,6 @@ export function TutorShell() {
         {error && <span className="ask-error">⚠ {error}</span>}
       </form>
 
-      {/* Generic starter prompts (until the first question). */}
-      {!live && (
-        <div className="starter-row">
-          <span className="starter-label">Try</span>
-          {STARTERS.map((s) => (
-            <button
-              key={s}
-              type="button"
-              className="starter-chip"
-              onClick={() => void runQuery(s)}
-              disabled={loading}
-            >
-              {s}
-            </button>
-          ))}
-        </div>
-      )}
-
       <main className="tutor-body">
         {/* LEFT: the active tutor — present, speaking the current line aloud. */}
         <section className="tutor-col" aria-label="Tutor">
@@ -246,17 +205,6 @@ export function TutorShell() {
                 {activeSpokenText}
                 <span className="q">”</span>
               </p>
-            </div>
-          </div>
-
-          {/* Live voice session (LiveKit): talk to the agent-backed tutor.
-              Independent of the ask-driven board above — no animation sync. */}
-          <div className="tutor-stage">
-            <div className="tutor-portrait">
-              <LiveTutorStage
-                refresh={voiceTutorsVersion}
-                onManage={() => setVoiceTutorsOpen(true)}
-              />
             </div>
           </div>
           <div className="flex-spacer" aria-hidden />
@@ -313,12 +261,6 @@ export function TutorShell() {
           <Avatar tutor={activeTutor} size={168} pose="idle" expression="happy" />
         </div>
       </aside>
-
-      <TutorsPanel
-        open={voiceTutorsOpen}
-        onClose={() => setVoiceTutorsOpen(false)}
-        onChanged={() => setVoiceTutorsVersion((v) => v + 1)}
-      />
     </div>
   );
 }
@@ -333,8 +275,8 @@ function BoardEmpty({ tutorName }: { tutorName: string }) {
       </div>
       <h2>A blank whiteboard, ready when you are</h2>
       <p>
-        Ask a question above, or pick a starter. {tutorName} will explain it right
-        here — drawing on the board while talking it through.
+        Ask a question above and {tutorName} will explain it right here —
+        drawing on the board while talking it through.
       </p>
     </div>
   );
