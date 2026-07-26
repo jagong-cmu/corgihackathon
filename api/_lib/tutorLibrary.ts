@@ -22,7 +22,9 @@ const DEFAULT_LIVE_TUTORS: LiveTutorOption[] = [
   // Curated YAML personas the worker always has:
   { id: "ada", name: "Ada", hasVoice: true, avatarProvider: "lemonslice" },
   { id: "coach-rios", name: "Coach Rios", hasVoice: true, avatarProvider: "lemonslice" },
-  // Custom tutors that live in the demo team's persona store:
+  // Store-canonical tutors from the demo team's persona store (each also
+  // ships a curated YAML fallback, so the worker can resolve them in a DB
+  // outage):
   { id: "nico", name: "Nico", hasVoice: true, avatarProvider: "lemonslice" },
   { id: "aayush", name: "Aayush", hasVoice: true, avatarProvider: "lemonslice" },
 ];

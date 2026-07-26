@@ -72,8 +72,9 @@ export interface TutorOption {
 
 /**
  * The client's no-backend floor: shown when neither tutor API tier is
- * reachable. All three ship as worker YAML (nico.yaml is the curated fallback
- * for the persona-store row), so they can connect even without the database.
+ * reachable. All four ship as worker YAML (nico.yaml and aayush.yaml are the
+ * curated fallbacks for their persona-store rows), so they can connect even
+ * without the database.
  * Keep in sync with DEFAULT_LIVE_TUTORS in api/_lib/tutorLibrary.ts.
  */
 export const BUILTIN_TUTORS: TutorOption[] = [
