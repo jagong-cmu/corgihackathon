@@ -6,7 +6,7 @@
  */
 import type { TurnResponse } from "./api";
 import type { VisualSpec } from "./spec/visualSpec";
-import { vectorDiagramExample, numberLineExample } from "./spec/examples";
+import { vectorDiagramExample, numberLineExample, pythagoreanExample } from "./spec/examples";
 import {
   animatedDiagramNewtonExample,
   animatedDiagramExample2,
@@ -32,6 +32,16 @@ export function clientMockTurn(userQuery: string): TurnResponse {
       q
     );
   const wantsEcon = /\b(supply|demand|equilibrium|market price|economic|economics)\b/.test(q);
+  const wantsGeometry =
+    /(pythagor\w*|hypotenuse|right triangle|right-angle triangle|a\^?2\s*\+\s*b\^?2)/.test(q);
+
+  if (wantsGeometry) {
+    return {
+      spokenText: `The Pythagorean theorem: in a right triangle, the square on the longest side — the hypotenuse — has the same area as the two squares on the other sides added together. So a² + b² = c². ${OFFLINE}`,
+      visualSpec: pythagoreanExample,
+      llm: false,
+    };
+  }
 
   if (wantsVector) {
     return {
