@@ -172,7 +172,15 @@ export class LiveCueQueue {
     // The wall-clock fallback deadline: how long until the audio clock WOULD
     // reach this cue if it keeps running, plus slack. A healthy clock always
     // wins the race; the deadline only fires when playback froze or died.
-    const naturalDelay = Math.max(0, turn.originMs + frame.cueMs - this.clock.positionMs);
+    // Capped at cueMs + slack: a cue never legitimately waits longer than its
+    // own offset after arrival, but a clock rebased to ~0 mid-turn (avatar
+    // death) makes origin+cueMs-position balloon to the whole prior playback
+    // — an uncapped deadline would strand exactly the frames the fallback
+    // exists to save.
+    const naturalDelay = Math.min(
+      Math.max(0, turn.originMs + frame.cueMs - this.clock.positionMs),
+      frame.cueMs + STALL_SLACK_MS
+    );
     this.pending.push({
       turnId: frame.turnId,
       seq: frame.seq,

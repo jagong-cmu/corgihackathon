@@ -373,6 +373,14 @@ async def entrypoint(ctx: agents.JobContext) -> None:
             if not text:
                 return
             log.info("learner: %s", text)
+            # A turn already in flight? Mid-speech that's a barge-in; before
+            # the first word it means the learner was still talking — abandon
+            # the stale turn and fold its transcript into this one so a split
+            # VAD final or a quick interjection loses nothing.
+            leftover = await session.preempt()
+            if leftover:
+                log.info("folding unspoken turn's transcript into the new turn")
+                text = f"{leftover} {text}"
             # Not awaited: the STT loop must keep consuming so barge-in during
             # the tutor's reply still registers.
             asyncio.create_task(run_turn(text))
@@ -404,6 +412,14 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         started_avatar = None
     if started_avatar is not None and started_avatar.is_active:
         async with turn_lock:
+            # A question asked during the handshake was answered on the direct
+            # track, and holding turn_lock only proves synthesis finished —
+            # the client is still PLAYING those frames. Drain the source
+            # before ripping the track away mid-word.
+            try:
+                await asyncio.wait_for(source.wait_for_playout(), timeout=15.0)
+            except (asyncio.TimeoutError, TimeoutError):
+                log.warning("voice track never drained — swapping to the avatar anyway")
             avatar = started_avatar
             # The avatar republishes the audio it receives, so publishing to
             # our own track too would play everything twice, slightly offset.

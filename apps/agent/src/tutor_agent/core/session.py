@@ -148,6 +148,10 @@ class TutorSession:
         # synthesizing — and cancelling a turn that hasn't said a word turns
         # that jitter into dead air with a healthy-looking log.
         self._active_turn_spoke = False
+        # The active turn's transcript, so preempt() can hand it back when a
+        # newer utterance abandons an unspoken turn (split VAD finals, or an
+        # interjection during the pre-first-audio gap).
+        self._active_transcript: str | None = None
         toolset = self.config.toolset
         self._tools = canvas_tool_definitions(
             only=WHITEBOARD_ACTIONS if toolset == "whiteboard" else None
@@ -202,6 +206,7 @@ class TutorSession:
     async def handle_transcript(self, transcript: str) -> TurnResult:
         turn_id = self._next_turn_id()
         self._active_turn_spoke = False
+        self._active_transcript = transcript
         superseded = self._cues.begin_turn(turn_id)
         if superseded is not None:
             # A new turn started while the last one was still in flight. Its
@@ -235,6 +240,13 @@ class TutorSession:
         async for event in self.llm.stream_turn(
             system=self._system, messages=messages, tools=self._tools
         ):
+            if not self._cues.should_emit(turn_id):
+                # Cancelled mid-generation. Bail out of the stream instead of
+                # draining the remaining tool rounds — this loop holds the
+                # worker's turn lock, and every extra round is dead air for
+                # the utterance that caused the cancellation.
+                stop_reason = "cancelled"
+                break
             if isinstance(event, TextDelta):
                 timeline.add_text(event.text)
                 if not streams_audio:
@@ -326,11 +338,21 @@ class TutorSession:
 
         # This turn can no longer be barged into as an ACTIVE turn, but its
         # audio is still playing out client-side — keep interrupting it until
-        # the estimated playout end (see barge_in).
-        self._cues.finish_turn(turn_id)
-        if first_audio_ms is not None:
-            playout_end = started + (first_audio_ms + timeline.total_duration_ms) / 1000 + 0.25
-            self._playing_out = (turn_id, playout_end)
+        # the estimated playout end (see barge_in). Guarded: a barge-in can
+        # land during the awaits just above, and re-arming playout state for a
+        # turn it cancelled would hand the next utterance a dead turn to
+        # "interrupt".
+        if self._cues.should_emit(turn_id):
+            self._cues.finish_turn(turn_id)
+            if first_audio_ms is not None:
+                # The estimate must err LONG: audio is pushed in bursts
+                # between LLM tool rounds (playout stalls behind generation on
+                # long lessons) and the avatar pipeline adds 0.5-2s before the
+                # learner hears anything. An over-long window only risks a
+                # stray interrupt on an already-quiet turn, which segmented
+                # avatar streams now survive.
+                audio_end = started + (first_audio_ms + timeline.total_duration_ms) / 1000
+                self._playing_out = (turn_id, max(audio_end, time.perf_counter()) + 2.0)
 
         speech = timeline.speech_text
         self._history.append({"role": "user", "content": transcript})
@@ -365,6 +387,8 @@ class TutorSession:
             await self._speak_streaming(text, timeline, voice_id=voice_id, model=model)
         else:
             result = await self.tts.synthesize(text, voice_id=voice_id, model=model)
+            if not self._cues.should_emit(timeline.turn_id):
+                return  # barged in while synthesizing — the audio is dead
             timeline.attach_timings(result.timings)
             await self._push_audio(result.audio)
 
@@ -383,6 +407,12 @@ class TutorSession:
         ends: list[int] = []
 
         async for chunk in self.tts.synthesize_stream(text, voice_id=voice_id, model=model):
+            if not self._cues.should_emit(timeline.turn_id):
+                # Barge-in landed mid-sentence: stop pushing NOW. Segmented
+                # avatar streams mean frames pushed after the interrupt open a
+                # fresh segment the avatar will happily play — the cancelled
+                # sentence's tail would audibly resume seconds later.
+                return
             if chunk.audio:
                 await self._push_audio(chunk.audio)
             # Chunks with audio but no alignment are normal; skip them here.
@@ -449,6 +479,26 @@ class TutorSession:
             self._playing_out = None
             if time.perf_counter() < playing[1]:
                 await self._interrupt_output(playing[0], "barge_in")
+
+    async def preempt(self) -> str | None:
+        """A newer utterance arrived while a turn is still in flight.
+
+        Mid-speech this is exactly a barge-in. Before the first word, the
+        in-flight turn is abandoned silently and its transcript handed back so
+        the caller can fold it into the new turn — that keeps split VAD finals
+        ("Hey Nico." / "Can you explain X?") and interjections landing in the
+        pre-first-audio gap from losing the first fragment, and it frees the
+        turn lock in milliseconds instead of after the dead turn drains its
+        remaining tool rounds.
+        """
+        turn_id = self._cues.active_turn_id
+        if turn_id is None:
+            return None
+        if self._active_turn_spoke:
+            await self.barge_in()
+            return None
+        self._cues.cancel(turn_id)
+        return self._active_transcript
 
     async def _interrupt_output(self, turn_id: str, reason: str) -> None:
         """Stop everything the learner can currently see or hear.
