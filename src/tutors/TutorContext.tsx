@@ -13,7 +13,9 @@ import {
   createContext,
   useCallback,
   useContext,
+  useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -106,6 +108,11 @@ function makeId(): string {
 
 const ACCENTS = ["#2f5fb0", "#c2413b", "#5f7d59", "#7a58b5", "#c98a1e"];
 
+/** The tutor the home page opens with, once the persona API serves them.
+ * Trudy stays the synchronous fallback — personas load async, and with the
+ * API down there is no Nico to show. */
+const DEFAULT_PERSONA_ID = "nico";
+
 export function TutorProvider({ children }: { children: ReactNode }) {
   const [tutors, setTutors] = useState<Tutor[]>([TRUDY]);
   const [activeTutorId, setActiveTutorId] = useState<string>(TRUDY.id);
@@ -114,11 +121,26 @@ export function TutorProvider({ children }: { children: ReactNode }) {
   const [manageOpen, setManageOpen] = useState(false);
   const [personasVersion, setPersonasVersion] = useState(0);
   const [sessionNonce, setSessionNonce] = useState(0);
+  // Flips on the first pick the USER makes; the default never overrides it.
+  const userPickedRef = useRef(false);
 
   const activeTutor = useMemo(
     () => tutors.find((t) => t.id === activeTutorId) ?? TRUDY,
     [tutors, activeTutorId]
   );
+
+  // Seat the default tutor when they arrive from the persona API (and keep
+  // them seated across roster refreshes) until the user picks someone.
+  useEffect(() => {
+    if (userPickedRef.current) return;
+    const preferred = tutors.find((t) => t.personaId === DEFAULT_PERSONA_ID);
+    if (preferred) setActiveTutorId(preferred.id);
+  }, [tutors]);
+
+  const setActiveTutor = useCallback((id: string) => {
+    userPickedRef.current = true;
+    setActiveTutorId(id);
+  }, []);
 
   const addTutor = useCallback((input: NewTutorInput): Tutor => {
     const tutor: Tutor = {
@@ -132,6 +154,8 @@ export function TutorProvider({ children }: { children: ReactNode }) {
       hasVoice: input.hasVoice,
     };
     setTutors((prev) => [...prev, tutor]);
+    // Creating a tutor is a pick — the default must not reclaim the seat.
+    userPickedRef.current = true;
     setActiveTutorId(tutor.id);
     return tutor;
   }, []);
@@ -174,7 +198,7 @@ export function TutorProvider({ children }: { children: ReactNode }) {
   const value: TutorContextValue = {
     tutors,
     activeTutor,
-    setActiveTutor: setActiveTutorId,
+    setActiveTutor,
     addTutor,
     removeTutor,
     syncPersonas,
