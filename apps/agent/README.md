@@ -124,9 +124,21 @@ export ELEVENLABS_API_KEY=...
 
 `AnthropicLLM` owns the tool-result round trip internally. Canvas actions are
 fire-and-forget, but the API still needs a `tool_result` per `tool_use` before
-the turn continues — so the provider acks each one with a stub immediately and
-yields the core a flat ordered event stream. A canvas action never blocks on the
-client, and `TutorSession` stays free of Anthropic-shaped plumbing.
+the turn continues — so the provider yields each call to the core (which
+validates it during the yield) and acks it immediately: a stub for accepted
+actions, an `is_error` tool_result carrying the validation message for
+rejected ones, so the model fixes the spec instead of narrating a board that
+never mounted. A canvas action never blocks on the client, and `TutorSession`
+stays free of Anthropic-shaped plumbing.
+
+Real providers also expose `prewarm()` (and the TTS clients `aclose()`). The
+worker calls `session.prewarm()` at startup — it writes the prompt-cache
+prefix and opens the LLM/TTS connections while the learner is still joining,
+which is most of why turn 1 is no slower than the rest — and
+`session.prewarm_tts()` (closing the replaced client) when an avatar swap or
+demotion changes the TTS path. Both are duck-typed and optional: a provider
+without them still works, it just starts its first turn cold, and a replaced
+TTS client without `aclose()` leaks its pooled connection.
 
 Merge Agent Handler tools (Phase 5) must **not** be acked this way. They leave
 our infrastructure, can exceed a second, and must be narration-covered (§7.3).
