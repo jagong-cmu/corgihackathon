@@ -3,6 +3,7 @@
  * Phase 2 they are replaced by live LLM output of the same shape.
  */
 import type { VisualSpec } from "./visualSpec";
+import type { AnimatedDiagramContent } from "./animatedDiagram";
 
 /**
  * Track 1 demo: "graph x^2 and show the tangent at x=1".
@@ -126,5 +127,66 @@ export const freeformExample: VisualSpec = {
     { stepId: "b1", atMs: 0 },
     { stepId: "b2", atMs: 1600 },
     { stepId: "b3", atMs: 3200 },
+  ],
+};
+
+/**
+ * The Pythagorean theorem, as the classic "squares on all three sides" proof.
+ * A right triangle (legs a, b; hypotenuse c) is drawn, then a square is built on
+ * each side — the two leg-squares as axis-aligned boxes, the tilted hypotenuse
+ * square from three growing lines (its 4th side IS the hypotenuse). The payoff
+ * equation a² + b² = c² lands last. Geometry is a 24-18-30 right triangle.
+ */
+export const pythagoreanExample: VisualSpec = {
+  specVersion: 1,
+  track: "freeform",
+  primitive: "animated_diagram",
+  content: {
+    viewBox: [128, 116],
+    elements: [
+      // the right triangle: horizontal leg a, vertical leg b, hypotenuse c
+      { id: "leg-a", kind: "line", from: [50, 64], to: [74, 64], color: "ink" },
+      { id: "leg-b", kind: "line", from: [50, 64], to: [50, 46], color: "ink" },
+      { id: "hyp", kind: "line", from: [50, 46], to: [74, 64], color: "ink" },
+      // little square = the right angle at the corner
+      { id: "right-angle", kind: "box", at: [52, 62], w: 4, h: 4, color: "ink" },
+      // square on leg b (to the left) and leg a (below)
+      { id: "square-b", kind: "box", at: [41, 55], w: 18, h: 18, text: "b²", color: "blue" },
+      { id: "square-a", kind: "box", at: [62, 76], w: 24, h: 24, text: "a²", color: "berry" },
+      // square on the hypotenuse c — three growing lines close it off
+      { id: "sqc-1", kind: "line", from: [74, 64], to: [92, 40], color: "sage" },
+      { id: "sqc-2", kind: "line", from: [92, 40], to: [68, 22], color: "sage" },
+      { id: "sqc-3", kind: "line", from: [68, 22], to: [50, 46], color: "sage" },
+      { id: "square-c-label", kind: "label", at: [71, 43], text: "c²", size: 6, color: "sage" },
+      // the payoff, up top
+      { id: "equation", kind: "label", at: [64, 12], text: "a² + b² = c²", size: 7, color: "ink" },
+    ],
+    caption: "The two smaller squares (a² + b²) together equal the big one (c²).",
+  } satisfies AnimatedDiagramContent,
+  drawSequence: [
+    { id: "leg-a", element: "leg-a", durationMs: 500 },
+    { id: "leg-b", element: "leg-b", durationMs: 500 },
+    { id: "hyp", element: "hyp", durationMs: 700 },
+    { id: "right-angle", element: "right-angle", durationMs: 300 },
+    { id: "square-b", element: "square-b", durationMs: 700 },
+    { id: "square-a", element: "square-a", durationMs: 700 },
+    { id: "sqc-1", element: "sqc-1", durationMs: 500 },
+    { id: "sqc-2", element: "sqc-2", durationMs: 500 },
+    { id: "sqc-3", element: "sqc-3", durationMs: 500 },
+    { id: "square-c-label", element: "square-c-label", durationMs: 500 },
+    { id: "equation", element: "equation", durationMs: 700 },
+  ],
+  syncCues: [
+    { stepId: "leg-a", atMs: 0 },
+    { stepId: "leg-b", atMs: 500 },
+    { stepId: "hyp", onPhrase: "hypotenuse", atMs: 1000 },
+    { stepId: "right-angle", atMs: 1700 },
+    { stepId: "square-b", atMs: 2100 },
+    { stepId: "square-a", atMs: 2900 },
+    { stepId: "sqc-1", onPhrase: "square on the", atMs: 3700 },
+    { stepId: "sqc-2", atMs: 4200 },
+    { stepId: "sqc-3", atMs: 4700 },
+    { stepId: "square-c-label", atMs: 5200 },
+    { stepId: "equation", onPhrase: "equals", atMs: 5800 },
   ],
 };

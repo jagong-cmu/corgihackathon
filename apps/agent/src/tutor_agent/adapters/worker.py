@@ -14,6 +14,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import time
 
 from livekit import agents, rtc
@@ -99,7 +100,7 @@ async def entrypoint(ctx: agents.JobContext) -> None:
     # Which tutor teaches this room is the room's choice, not the process's:
     # the session endpoint (server/live.ts) names a persona in the room
     # metadata. Rooms without metadata keep the old TUTOR_PERSONA behavior.
-    persona_slug, owner = _persona_request(ctx.room.metadata)
+    persona_slug, owner = _persona_request(ctx.room.metadata, ctx.room.name)
     # psycopg is synchronous; one lookup at session start, off the event loop.
     persona = await asyncio.to_thread(_load_persona, persona_slug, owner)
     log.info("session starting with persona %s", persona.id)
@@ -108,7 +109,7 @@ async def entrypoint(ctx: agents.JobContext) -> None:
     # synthesized segment has somewhere to go the instant it exists.
     source = rtc.AudioSource(SAMPLE_RATE, NUM_CHANNELS)
     track = rtc.LocalAudioTrack.create_audio_track("tutor-voice", source)
-    await ctx.room.local_participant.publish_track(
+    voice_publication = await ctx.room.local_participant.publish_track(
         track, rtc.TrackPublishOptions(source=rtc.TrackSource.SOURCE_MICROPHONE)
     )
 
@@ -142,10 +143,14 @@ async def entrypoint(ctx: agents.JobContext) -> None:
 
     avatar = await _maybe_start_avatar(ctx, persona)
     if avatar is not None and avatar.is_active:
-        # Simli republishes the audio it receives, so publishing to our own
-        # track too would play everything twice, slightly offset. Hand audio to
-        # the avatar only, and re-request TTS at Simli's ingest rate.
+        # The avatar republishes the audio it receives, so publishing to our
+        # own track too would play everything twice, slightly offset. Hand
+        # audio to the avatar only, and re-request TTS at its ingest rate.
         adapter.audio_source = None
+        # Our own track will never carry a frame again — unpublish it so the
+        # client sees exactly one audio track (the avatar's, lip-synced to its
+        # video) instead of a silent twin it might pair with the face.
+        await ctx.room.local_participant.unpublish_track(voice_publication.sid)
         session.avatar = avatar
         # Avatars ingest at 16k, so re-build the provider at that rate.
         session.tts = make_tts(persona, sample_rate=AVATAR_SAMPLE_RATE)
@@ -226,19 +231,37 @@ async def entrypoint(ctx: agents.JobContext) -> None:
 
     # -- inbound: the learner speaking --------------------------------------
 
+    transcribing: set[str] = set()
+
+    def _maybe_transcribe(track: rtc.Track, participant_identity: str) -> None:
+        if track.kind != rtc.TrackKind.KIND_AUDIO:
+            return
+        if participant_identity in known_avatar_identities():
+            # The avatar publishes audio on our behalf; transcribing it would
+            # make the tutor answer itself.
+            return
+        if track.sid in transcribing:
+            return
+        transcribing.add(track.sid)
+        asyncio.create_task(_transcribe(track))
+
     @ctx.room.on("track_subscribed")
     def _on_track(
         track: rtc.Track,
         publication: rtc.TrackPublication,
         participant: rtc.RemoteParticipant,
     ) -> None:
-        if track.kind != rtc.TrackKind.KIND_AUDIO:
-            return
-        if participant.identity in known_avatar_identities():
-            # The avatar publishes audio on our behalf; transcribing it would
-            # make the tutor answer itself.
-            return
-        asyncio.create_task(_transcribe(track))
+        _maybe_transcribe(track, participant.identity)
+
+    # The learner usually joins and publishes their microphone while we are
+    # still loading the persona or inside the avatar handshake — seconds during
+    # which track_subscribed fires with no handler attached. Sweep what is
+    # already in the room, or an early microphone never reaches STT and the
+    # tutor spends the whole session deaf.
+    for remote in ctx.room.remote_participants.values():
+        for publication in remote.track_publications.values():
+            if publication.track is not None:
+                _maybe_transcribe(publication.track, remote.identity)
 
     async def _transcribe(track: rtc.Track) -> None:
         """Stream the learner's audio through Scribe v2 and drive turns."""
@@ -292,23 +315,32 @@ if __name__ == "__main__":
     main()
 
 
-def _persona_request(metadata: str | None) -> tuple[str, str | None]:
+def _persona_request(metadata: str | None, room_name: str = "") -> tuple[str, str | None]:
     """(persona slug, owner) for this room.
 
     The session endpoint (server/live.ts) writes {"persona": ..., "owner": ...}
-    into the room metadata at creation. Rooms created any other way — a
-    livekit-server --dev join, the cue-inspector replay script — carry no
-    metadata and fall back to TUTOR_PERSONA, so every existing workflow keeps
-    working unchanged.
+    into the room metadata at creation and names the room tutor-<persona>-<hex>.
+    Metadata is authoritative (it also carries the owner), but rooms have been
+    seen arriving with it empty — a client re-joining on a still-valid token
+    after the empty room was reclaimed implicitly recreates it bare — and
+    falling straight to TUTOR_PERSONA there hands the learner a different tutor
+    than the one they picked. The room name survives recreation, so it is the
+    second source. Rooms created any other way — a livekit-server --dev join,
+    the cue-inspector replay script — match neither and keep the old
+    TUTOR_PERSONA behavior, so every existing workflow works unchanged.
     """
     if metadata:
         try:
             data = json.loads(metadata)
         except json.JSONDecodeError:
-            log.warning("room metadata is not JSON — using the default persona")
+            log.warning("room metadata is not JSON — trying the room name")
         else:
             if isinstance(data, dict) and data.get("persona"):
                 return str(data["persona"]), data.get("owner") or None
+    named = re.fullmatch(r"tutor-([a-z][a-z0-9_-]{1,47})-[0-9a-f]{8}", room_name or "")
+    if named:
+        log.warning("room %s has no persona metadata — using its name", room_name)
+        return named.group(1), None
     return DEFAULT_PERSONA, None
 
 
