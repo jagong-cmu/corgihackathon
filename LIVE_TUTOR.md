@@ -85,6 +85,27 @@ npm install && npm run dev                  # http://localhost:5173
 | avatar vendor key | voice-only session (worker logs it, keeps going) |
 | mic permission denied | listen-only session with a visible warning |
 
+## Deploying (Vercel)
+
+The frontend's server needs are three tiny endpoints, shipped as Vercel
+serverless functions in `api/live/` (same paths as the dev middleware, so the
+client is identical in dev and prod):
+
+- `POST /api/live/session` — LiveKit room + learner token (needs secrets)
+- `GET /api/live/health` — is LiveKit configured on this deployment?
+- `GET /api/live/tutors` — picker list; override with a `TUTOR_LIBRARY` JSON
+  env var, defaults in `server/tutorLibrary.ts`
+
+Setup: in the Vercel project → Settings → Environment Variables, add
+`LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET` (same values as
+.env.local) and redeploy. **The agent worker still runs wherever you run it**
+(a laptop is fine — it dials out to LiveKit Cloud), with `DATABASE_URL` set so
+custom tutors resolve. Visitors anywhere → Vercel page → LiveKit Cloud room →
+your worker joins with the persona named in the room metadata.
+
+The Tutors *builder* panel needs the full local stack (apps/api + Postgres);
+on Vercel it explains that instead of half-working.
+
 ## Known limitations (deliberate for now)
 
 - No auth: the builder writes ownerless **synthetic** library personas (the

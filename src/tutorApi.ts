@@ -184,6 +184,22 @@ export interface VoiceCapabilities {
   slots_remaining: number;
 }
 
+/**
+ * Deployed-tier tutor list (a serverless function / dev middleware at
+ * /api/live/tutors). Used when the full persona API isn't reachable —
+ * e.g. the Vercel deployment. Returns null when unavailable or empty.
+ */
+export async function listDeployedTutors(): Promise<TutorOption[] | null> {
+  try {
+    const res = await fetch("/api/live/tutors");
+    if (!res.ok) return null;
+    const body = await res.json();
+    return Array.isArray(body?.tutors) && body.tutors.length ? body.tutors : null;
+  } catch {
+    return null;
+  }
+}
+
 /** The ElevenLabs voice library — usable on any plan, including free. */
 export async function listVoices(): Promise<VoiceOption[]> {
   const body = await request<{ voices: VoiceOption[] }>("/voices");

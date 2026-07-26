@@ -13,6 +13,7 @@ import { useEffect, useRef, useState } from "react";
 import { useLiveTutor } from "./useLiveTutor";
 import {
   BUILTIN_TUTORS,
+  listDeployedTutors,
   listTutors,
   toOption,
   tutorApiAvailable,
@@ -45,19 +46,24 @@ export function LiveTutorStage({ refresh = 0, onManage }: Props) {
     };
   }, []);
 
-  // Tutor options: persona API first, built-ins as the floor.
+  // Tutor options, best source first: the persona API (full local stack),
+  // then the deployed /api/live/tutors list (serverless), built-ins as floor.
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      if (!(await tutorApiAvailable())) return;
-      try {
-        const fromApi = (await listTutors()).map(toOption);
-        if (cancelled || !fromApi.length) return;
-        const seen = new Set(fromApi.map((t) => t.id));
-        setOptions([...fromApi, ...BUILTIN_TUTORS.filter((t) => !seen.has(t.id))]);
-      } catch {
-        /* API up but listing failed (e.g. DB down) — built-ins stay */
+      if (await tutorApiAvailable()) {
+        try {
+          const fromApi = (await listTutors()).map(toOption);
+          if (cancelled || !fromApi.length) return;
+          const seen = new Set(fromApi.map((t) => t.id));
+          setOptions([...fromApi, ...BUILTIN_TUTORS.filter((t) => !seen.has(t.id))]);
+          return;
+        } catch {
+          /* API up but listing failed (e.g. DB down) — try the next tier */
+        }
       }
+      const deployed = await listDeployedTutors();
+      if (!cancelled && deployed) setOptions(deployed);
     })();
     return () => {
       cancelled = true;

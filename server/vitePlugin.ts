@@ -14,6 +14,7 @@
 import type { Plugin, Connect } from "vite";
 import { runTurn } from "./turn";
 import { createLiveSession, liveKitConfigured } from "./live";
+import { liveTutorLibrary } from "./tutorLibrary";
 import { llmAvailable } from "./llm";
 import { checkContentBodyAvailable, mergeSyncIngest, mergeConfigured } from "./merge";
 import { ingestDocument, listMaterials, corpusSize, provider, retrieve } from "./rag";
@@ -148,6 +149,12 @@ export function whiteboardApiPlugin(): Plugin {
 
       server.middlewares.use("/api/live/health", async (_req, res) => {
         json(res, 200, { configured: liveKitConfigured() });
+      });
+
+      // Same contract as the deployed api/live/tutors function (parity: the
+      // frontend uses one fallback chain in dev and in prod).
+      server.middlewares.use("/api/live/tutors", async (_req, res) => {
+        json(res, 200, { tutors: liveTutorLibrary() });
       });
 
       // ---- Health ----
