@@ -142,6 +142,12 @@ class TutorSession:
         # idle tutor forever (clear-buffer RPCs to the avatar, cancel_turn to
         # the client) without a word being spoken.
         self._playing_out: tuple[str, float] | None = None
+        # Whether the active turn has pushed any audio yet. STT VAD routinely
+        # fires a spurious START_OF_SPEECH within a couple seconds of
+        # finalizing the question — exactly while the answer is still
+        # synthesizing — and cancelling a turn that hasn't said a word turns
+        # that jitter into dead air with a healthy-looking log.
+        self._active_turn_spoke = False
         toolset = self.config.toolset
         self._tools = canvas_tool_definitions(
             only=WHITEBOARD_ACTIONS if toolset == "whiteboard" else None
@@ -195,6 +201,7 @@ class TutorSession:
 
     async def handle_transcript(self, transcript: str) -> TurnResult:
         turn_id = self._next_turn_id()
+        self._active_turn_spoke = False
         superseded = self._cues.begin_turn(turn_id)
         if superseded is not None:
             # A new turn started while the last one was still in flight. Its
@@ -291,6 +298,20 @@ class TutorSession:
                 if first_audio_ms is None:
                     first_audio_ms = (time.perf_counter() - started) * 1000
                 await self._emit(turn_id, timeline.resolve_ready())
+
+        # A barge-in can land during the tail segment too — after the
+        # mid-stream check above. Flushing or recording playout past this
+        # point would emit the very fragment the interruption dropped.
+        if not self._cues.should_emit(turn_id):
+            return TurnResult(
+                turn_id=turn_id,
+                speech_text=timeline.speech_text,
+                actions=[],
+                dropped_actions=dropped,
+                stop_reason=stop_reason,
+                cancelled=True,
+                first_audio_ms=first_audio_ms,
+            )
 
         # Anything anchored past the end of speech fires at the end of audio.
         await self._emit(turn_id, timeline.resolve_remaining())
@@ -390,6 +411,7 @@ class TutorSession:
         timeline.attach_timings(CharacterTimings(characters=joined, start_ms=starts, end_ms=ends))
 
     async def _push_audio(self, audio: bytes) -> None:
+        self._active_turn_spoke = True
         await self.channel.send_audio(audio)
         if self.avatar is not None:
             await self.avatar.push_audio(audio)
@@ -408,6 +430,15 @@ class TutorSession:
         """
         turn_id = self._cues.active_turn_id
         if turn_id is not None:
+            if not self._active_turn_spoke:
+                # The turn hasn't said a word — there is nothing to talk over.
+                # If this speech onset is a real follow-up, its transcript will
+                # supersede the turn; if it's VAD jitter (common right after a
+                # question finalizes), cancelling here is how a tutor answers
+                # with dead air.
+                log.debug("barge-in ignored: turn %s has not spoken yet", turn_id)
+                return
+            log.info("barge-in: interrupting turn %s mid-speech", turn_id)
             self._cues.cancel(turn_id)
             self._playing_out = None
             await self._interrupt_output(turn_id, "barge_in")

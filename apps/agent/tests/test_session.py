@@ -242,16 +242,24 @@ class TestAudioLifecycle:
         assert adapter.audio_flushes == 0
 
     async def test_a_turn_interrupted_mid_stream_does_not_flush(self):
-        """Flushing after an interruption would emit the fragment we just dropped."""
+        """Flushing after an interruption would emit the fragment we just dropped.
+
+        The barge-in lands during the SECOND sentence: a turn that hasn't
+        spoken yet deliberately ignores barge-in (VAD jitter right after the
+        question would otherwise kill every answer before its first word).
+        """
         session, adapter = _session(
             [ScriptedTurn(events=["First sentence. ", "Second sentence. "])]
         )
 
-        # Barge in from inside TTS, i.e. while the turn is still streaming.
         real_synthesize = session.tts.synthesize
+        calls = 0
 
         async def interrupt_then_synthesize(text: str, **kwargs):
-            await session.barge_in()
+            nonlocal calls
+            calls += 1
+            if calls == 2:
+                await session.barge_in()
             return await real_synthesize(text, **kwargs)
 
         session.tts.synthesize = interrupt_then_synthesize
