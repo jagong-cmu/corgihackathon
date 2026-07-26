@@ -1,125 +1,174 @@
 /**
- * Frontend API client. Talks to the backend mounted on the same origin
- * (see server/vitePlugin.ts). On a static host with no backend (e.g. GitHub
- * Pages), /api/turn is absent — we fall back to a client-side mock so the
- * render pipeline still works.
+ * Client for the tutor API (`apps/api`).
+ *
+ * Everything HTTP the browser does goes through here. In development Vite
+ * proxies `/api` to the FastAPI process, so this is same-origin and there is no
+ * CORS configuration anywhere in the stack.
+ *
+ * There is no LLM call in this file and there should never be one again. The
+ * tutor's turns happen over the LiveKit room, driven by the agent worker; this
+ * is session setup and the learner's materials.
  */
-import type { VisualSpec } from "./spec/visualSpec";
 
-export interface Grounding {
-  /** Whether retrieved material was passed to the LLM this turn. */
-  used: boolean;
-  /** File names the grounding chunks came from. */
-  sources: string[];
-  /** Number of chunks used. */
-  k: number;
+const API = "/api";
+
+export interface RetrievalStatus {
+  available: boolean;
+  embeddings?: string;
+  detail?: string;
 }
 
-export interface TurnResponse {
-  spokenText: string;
-  visualSpec: VisualSpec;
-  /** Whether the server used a live LLM (vs a mock / offline build). */
-  llm: boolean;
-  /** Present when the backend grounded the answer in ingested materials. */
-  grounding?: Grounding;
+export interface SessionInfo {
+  userId: string;
+  persisted: boolean;
+  room: string;
+  identity: string;
+  url: string;
+  token: string;
+  persona: string;
+  retrieval: RetrievalStatus;
 }
 
 export interface Material {
-  fileId: string;
-  fileName: string;
-  mimeType?: string;
+  uploadId: string;
+  filename: string;
   kind: string;
   chunks: number;
-  chars: number;
+  byteSize: number;
+  createdAt?: string;
 }
 
-export interface MaterialsResponse {
-  materials: Material[];
-  corpusSize: number;
-  provider: string;
-  merge: { ok: boolean; detail: string };
-}
-
-/** Ask the tutor a question; returns spoken text + a validated visual spec. */
-export async function askTutor(
-  userQuery: string,
-  retrievedContext?: string[]
-): Promise<TurnResponse> {
-  const { clientMockTurn } = await import("./mock");
-  let res: Response;
-  try {
-    res = await fetch("/api/turn", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ userQuery, retrievedContext }),
-    });
-  } catch {
-    return clientMockTurn(userQuery);
-  }
-  // No backend on this host (static hosting like GitHub Pages): a POST to a
-  // path that only serves static files returns 404 (not found) or 405 (method
-  // not allowed). Either way, fall back to the client-side mock.
-  if (res.status === 404 || res.status === 405) return clientMockTurn(userQuery);
-  if (!res.ok) {
-    const detail = await res.json().catch(() => ({}));
-    throw new Error(detail.error ?? `request failed (${res.status})`);
-  }
-  try {
-    return (await res.json()) as TurnResponse;
-  } catch {
-    return clientMockTurn(userQuery);
-  }
-}
-
-/** Read a File as base64 (no data-URL prefix). */
-function fileToBase64(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onerror = () => reject(reader.error);
-    reader.onload = () => {
-      const result = String(reader.result);
-      resolve(result.slice(result.indexOf(",") + 1));
-    };
-    reader.readAsDataURL(file);
-  });
+export interface SourceChunk {
+  chunkId: string;
+  text: string;
+  uri: string | null;
+  title: string | null;
 }
 
 /**
- * Upload files to be ingested (extract → chunk → embed → store). This is the
- * local fallback for Merge; grounded answers use the resulting corpus.
+ * FastAPI puts a string in `detail` for a plain error and an object for a
+ * structured one. Flatten both into something a person can read — the raw shape
+ * rendered into a status line is `[object Object]`.
  */
-export async function ingestFiles(files: File[]): Promise<MaterialsResponse> {
-  const payload = {
-    files: await Promise.all(
-      files.map(async (f) => ({
-        name: f.name,
-        mimeType: f.type,
-        dataBase64: await fileToBase64(f),
-      }))
-    ),
-  };
-  const res = await fetch("/api/ingest", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(payload),
-  });
-  if (!res.ok) {
-    const detail = await res.json().catch(() => ({}));
-    throw new Error(detail.error ?? `ingest failed (${res.status})`);
+async function failure(response: Response): Promise<Error> {
+  let detail: unknown;
+  try {
+    detail = (await response.json())?.detail;
+  } catch {
+    detail = null;
   }
-  return res.json();
+  if (typeof detail === "string") return new Error(detail);
+  if (detail && typeof detail === "object" && "detail" in detail) {
+    return new Error(String((detail as { detail: unknown }).detail));
+  }
+  return new Error(detail ? JSON.stringify(detail) : `${response.status} ${response.statusText}`);
 }
 
-/** List ingested materials + corpus/provider/merge status. */
-export async function getMaterials(): Promise<MaterialsResponse> {
-  const res = await fetch("/api/materials");
-  if (!res.ok) throw new Error(`materials failed (${res.status})`);
-  return res.json();
+async function json<T>(response: Response): Promise<T> {
+  if (!response.ok) throw await failure(response);
+  return (await response.json()) as T;
 }
 
-/** Trigger a Merge sync (live only; no-op when Merge isn't configured). */
-export async function syncMerge(): Promise<{ configured: boolean; ingested: number }> {
-  const res = await fetch("/api/merge/sync", { method: "POST" });
-  if (!res.ok) throw new Error(`merge sync failed (${res.status})`);
-  return res.json();
+export async function startSession(
+  options: { persona?: string; userId?: string } = {},
+): Promise<SessionInfo> {
+  const response = await fetch(`${API}/session`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      ...(options.userId ? { "x-user-id": options.userId } : {}),
+    },
+    body: JSON.stringify({ persona: options.persona ?? null }),
+  });
+  const body = await json<{
+    user_id: string;
+    persisted: boolean;
+    room: string;
+    identity: string;
+    url: string;
+    token: string;
+    persona: string;
+    retrieval: RetrievalStatus;
+  }>(response);
+
+  return {
+    userId: body.user_id,
+    persisted: body.persisted,
+    room: body.room,
+    identity: body.identity,
+    url: body.url,
+    token: body.token,
+    persona: body.persona,
+    retrieval: body.retrieval,
+  };
+}
+
+interface MaterialWire {
+  upload_id: string;
+  filename: string;
+  kind: string;
+  chunks: number;
+  byte_size: number;
+  created_at?: string;
+}
+
+const toMaterial = (m: MaterialWire): Material => ({
+  uploadId: m.upload_id,
+  filename: m.filename,
+  kind: m.kind,
+  chunks: m.chunks,
+  byteSize: m.byte_size,
+  createdAt: m.created_at,
+});
+
+export async function listMaterials(
+  userId: string,
+): Promise<{ materials: Material[]; retrieval: RetrievalStatus }> {
+  const response = await fetch(`${API}/materials`, { headers: { "x-user-id": userId } });
+  const body = await json<{ materials: MaterialWire[]; retrieval: RetrievalStatus }>(response);
+  return { materials: body.materials.map(toMaterial), retrieval: body.retrieval };
+}
+
+export async function uploadMaterial(userId: string, file: File): Promise<Material> {
+  const form = new FormData();
+  form.append("file", file);
+  const response = await fetch(`${API}/materials`, {
+    method: "POST",
+    headers: { "x-user-id": userId },
+    body: form,
+  });
+  return toMaterial(await json<MaterialWire>(response));
+}
+
+export async function deleteMaterial(userId: string, uploadId: string): Promise<void> {
+  const response = await fetch(`${API}/materials/${uploadId}`, {
+    method: "DELETE",
+    headers: { "x-user-id": userId },
+  });
+  if (!response.ok) throw await failure(response);
+}
+
+/** Backs `show_source`: the board asks for the excerpt the tutor is teaching from. */
+export async function fetchChunk(userId: string, chunkId: string): Promise<SourceChunk> {
+  const response = await fetch(`${API}/materials/chunks/${encodeURIComponent(chunkId)}`, {
+    headers: { "x-user-id": userId },
+  });
+  const body = await json<{
+    chunk_id: string;
+    text: string;
+    uri: string | null;
+    title: string | null;
+  }>(response);
+  return { chunkId: body.chunk_id, text: body.text, uri: body.uri, title: body.title };
+}
+
+export interface Health {
+  status: string;
+  database: string;
+  livekit: string;
+  retrieval: RetrievalStatus;
+}
+
+export async function getHealth(): Promise<Health> {
+  return json<Health>(await fetch(`${API}/health`));
 }

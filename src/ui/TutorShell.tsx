@@ -1,118 +1,59 @@
 /**
- * TutorShell — the app frame.
+ * TutorShell — the app frame for a live lesson.
  *
- *   - LEFT: the tutor "stage" — an intentional placeholder reserved for the
- *     voice avatar a teammate is building — plus the current spoken line.
- *   - RIGHT: the whiteboard where the visual subsystem draws.
+ *   - LEFT: the tutor. The avatar's video when the persona has one, Trudy
+ *     otherwise, plus the controls that matter during a lesson: talk, mute,
+ *     leave.
+ *   - RIGHT: the whiteboard, filled in by the agent's action stream.
  *
- * Two ways to drive the whiteboard:
- *   - Ask bar: type a question -> POST /api/turn -> live { spokenText,
- *     visualSpec } (falls back to a client mock on a static host).
- *   - Scene switcher: hardcoded specs that exercise each render track.
+ * There is no text input. The learner talks; the agent transcribes, thinks,
+ * speaks, and draws. Every visual on the board arrived as a `canvas_action`
+ * timed to the words it belongs to — nothing here polls, and nothing here asks
+ * a model for anything.
  */
-import { useCallback, useMemo, useRef, useState, type FormEvent } from "react";
-import { WhiteboardRenderer } from "../render/WhiteboardRenderer";
-import type { RevealApi } from "../voice/voiceInterface";
-import {
-  functionPlotExample,
-  freeformExample,
-  brokenExample,
-} from "../spec/examples";
-import type { VisualSpec } from "../spec/visualSpec";
-import { askTutor, type TurnResponse } from "../api";
 
-interface Demo {
-  key: string;
-  label: string;
-  dot: string;
-  spokenText: string;
-  spec: unknown;
+import { useEffect, useRef } from "react";
+import type { RemoteVideoTrack } from "livekit-client";
+import { Board } from "../board/Board";
+import { Trudy } from "../mascot/Trudy";
+import type { LiveSessionApi } from "../live/useLiveSession";
+
+interface Props {
+  session: LiveSessionApi;
 }
 
-const DEMOS: Demo[] = [
-  {
-    key: "fn",
-    label: "Graph a function",
-    dot: "#2f5fb0",
-    spokenText:
-      "Here's the graph of x squared. Watch as I draw the curve, then the tangent at x equals one.",
-    spec: functionPlotExample satisfies VisualSpec,
-  },
-  {
-    key: "freeform",
-    label: "Explain with Trudy",
-    dot: "#e08a3c",
-    spokenText:
-      "Let me walk you through it — one idea at a time, revealed as I talk.",
-    spec: freeformExample satisfies VisualSpec,
-  },
-  {
-    key: "broken",
-    label: "Guardrail",
-    dot: "#c2413b",
-    spokenText:
-      "If a drawing ever fails, I fall back to a clean equation — never a blank screen.",
-    spec: brokenExample,
-  },
-];
+const STATUS_LABELS: Record<string, string> = {
+  idle: "not connected",
+  connecting: "connecting",
+  "waiting-for-tutor": "waiting for the tutor",
+  live: "live",
+  reconnecting: "reconnecting",
+  error: "error",
+};
 
-/** Initial scene from ?demo= so each scene is directly linkable. */
-function initialDemoKey(): string {
-  if (typeof window === "undefined") return DEMOS[0].key;
-  const q = new URLSearchParams(window.location.search).get("demo");
-  return DEMOS.some((d) => d.key === q) ? (q as string) : DEMOS[0].key;
-}
+export function TutorShell({ session }: Props) {
+  const {
+    board,
+    status,
+    detail,
+    error,
+    info,
+    avatarTrack,
+    audioBlocked,
+    micEnabled,
+    drift,
+    log,
+    connect,
+    disconnect,
+    toggleMic,
+    enableAudio,
+    setParameter,
+    selectShape,
+    userId,
+  } = session;
 
-export function TutorShell() {
-  const [demoKey, setDemoKey] = useState<string>(initialDemoKey);
-  const [playToken, setPlayToken] = useState(0);
-  const revealApiRef = useRef<RevealApi | null>(null);
-
-  const [query, setQuery] = useState("");
-  const [live, setLive] = useState<TurnResponse | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const demo = useMemo(
-    () => DEMOS.find((d) => d.key === demoKey) ?? DEMOS[0],
-    [demoKey]
-  );
-
-  const activeSpec: unknown = live ? live.visualSpec : demo.spec;
-  const activeSpokenText = live ? live.spokenText : demo.spokenText;
-
-  const onRevealApi = useCallback((api: RevealApi) => {
-    revealApiRef.current = api;
-  }, []);
-
-  const replay = useCallback(() => setPlayToken((t) => t + 1), []);
-
-  const selectDemo = useCallback((key: string) => {
-    setDemoKey(key);
-    setLive(null);
-    setError(null);
-    setPlayToken((t) => t + 1);
-  }, []);
-
-  const submit = useCallback(
-    async (e: FormEvent) => {
-      e.preventDefault();
-      const q = query.trim();
-      if (!q || loading) return;
-      setLoading(true);
-      setError(null);
-      try {
-        const res = await askTutor(q);
-        setLive(res);
-        setPlayToken((t) => t + 1);
-      } catch (err) {
-        setError((err as Error).message);
-      } finally {
-        setLoading(false);
-      }
-    },
-    [query, loading]
-  );
+  const connected = status !== "idle" && status !== "error";
+  const worstDrift = drift.length ? drift[0] : null;
 
   return (
     <div className="tutor-shell">
@@ -126,87 +67,116 @@ export function TutorShell() {
         </div>
 
         <div className="controls">
-          <div className="segmented" role="group" aria-label="Scene">
-            {DEMOS.map((d) => (
+          <span className={`status-pill is-${status}`}>
+            <span className="status-dot" />
+            {STATUS_LABELS[status] ?? status}
+            {info && status === "live" && <em>· {info.persona}</em>}
+          </span>
+
+          {connected ? (
+            <>
               <button
-                key={d.key}
-                type="button"
-                className="seg"
-                aria-pressed={!live && demoKey === d.key}
-                onClick={() => selectDemo(d.key)}
+                className={`icon-btn${micEnabled ? "" : " is-muted"}`}
+                onClick={() => void toggleMic()}
+                title={micEnabled ? "Mute your microphone" : "Unmute your microphone"}
               >
-                <span className="seg-dot" style={{ background: d.dot }} />
-                {d.label}
+                <MicIcon muted={!micEnabled} />
+                {micEnabled ? "Mic on" : "Muted"}
               </button>
-            ))}
-          </div>
-          <button className="icon-btn" onClick={replay} title="Replay the animation">
-            <ReplayIcon />
-            Replay
-          </button>
+              <button className="icon-btn is-danger" onClick={() => void disconnect()}>
+                Leave
+              </button>
+            </>
+          ) : (
+            <button className="ask-btn" onClick={() => void connect()}>
+              Start a lesson
+            </button>
+          )}
         </div>
       </header>
 
-      {/* Ask bar: drives the whiteboard from a live turn (mock offline). */}
-      <form className="ask-bar" onSubmit={submit}>
-        <div className="ask-field">
-          <MarkerIcon />
-          <input
-            className="ask-input"
-            type="text"
-            value={query}
-            placeholder="Ask the tutor…  e.g. “graph x^2 and show the tangent at x = 1”"
-            onChange={(e) => setQuery(e.target.value)}
-            disabled={loading}
-          />
+      {audioBlocked && (
+        // Without playback there is no clock, so no cue past 0ms can fire. This
+        // is the one browser policy that silently breaks the whole product.
+        <div className="banner is-warning">
+          Your browser blocked audio until you interact with the page.
+          <button className="banner-action" onClick={() => void enableAudio()}>
+            Enable audio
+          </button>
         </div>
-        <button className="ask-btn" type="submit" disabled={loading || !query.trim()}>
-          {loading ? "Thinking…" : "Ask Trudy"}
-        </button>
-        {live && (
-          <span className={`ask-mode ${live.llm ? "live" : "mock"}`}>
-            {live.llm ? "live" : "offline demo"}
-          </span>
-        )}
-        {error && <span className="ask-error">⚠ {error}</span>}
-      </form>
+      )}
+
+      {error && <div className="banner is-error">⚠ {error}</div>}
+
+      {info && !info.retrieval.available && (
+        <div className="banner is-muted">
+          Teaching without your uploaded materials — {info.retrieval.detail}
+        </div>
+      )}
 
       <main className="tutor-body">
-        {/* LEFT: reserved tutor stage + spoken line */}
         <section className="tutor-col" aria-label="Tutor">
           <div className="tutor-stage">
-            <div className="tutor-portrait">
-              <div className="tutor-orb">
-                <MicIcon />
+            {avatarTrack ? (
+              <AvatarVideo track={avatarTrack} />
+            ) : (
+              <div className="tutor-portrait">
+                <Trudy pose={status === "live" ? "wave" : "idle"} expression="happy" size={220} />
+                <div className="tutor-label">
+                  {status === "live"
+                    ? "Listening — just talk"
+                    : status === "idle"
+                      ? "Start a lesson to begin"
+                      : detail || STATUS_LABELS[status]}
+                </div>
+                {status === "live" && (
+                  <p className="tutor-sub">
+                    This persona has no avatar. The voice is live; the board is
+                    drawing in time with it.
+                  </p>
+                )}
               </div>
-              <div className="tutor-label">Your tutor lives here</div>
-              <p className="tutor-sub">
-                Reserved for the voice avatar your teammate is building — it speaks
-                each line while Trudy draws.
-              </p>
-              <span className="tutor-chip">Voice · coming soon</span>
-            </div>
+            )}
           </div>
 
-          <div className="narration">
-            <div className="narration-label">Now saying</div>
-            <p className="narration-text">“{activeSpokenText}”</p>
-            <div className="narration-note">
-              The voice reads this aloud; the whiteboard reveals in sync.
-            </div>
+          <div className="session-meta">
+            {worstDrift && (
+              <div className="meta-row" title="Difference between when an action was meant to land and when it did">
+                <span className="meta-label">cue drift</span>
+                <span className={`drift-chip is-${worstDrift.band}`}>
+                  {worstDrift.driftMs >= 0 ? "+" : ""}
+                  {worstDrift.driftMs}ms
+                </span>
+                <span className="meta-sub">{worstDrift.action}</span>
+              </div>
+            )}
+            {info && (
+              <div className="meta-row">
+                <span className="meta-label">room</span>
+                <span className="meta-sub">{info.room}</span>
+              </div>
+            )}
           </div>
+
+          {log.length > 0 && (
+            <ul className="session-log">
+              {log.slice(0, 6).map((line) => (
+                <li key={line.id} className={`log-line is-${line.tone}`}>
+                  {line.message}
+                </li>
+              ))}
+            </ul>
+          )}
         </section>
 
-        {/* RIGHT: the whiteboard */}
         <section className="whiteboard-panel" aria-label="Whiteboard">
           <div className="whiteboard-frame">
             <div className="whiteboard-surface">
-              <WhiteboardRenderer
-                key={`${live ? "live" : demo.key}-${playToken}`}
-                rawSpec={activeSpec}
-                autoPlay
-                playToken={playToken}
-                onRevealApi={onRevealApi}
+              <Board
+                board={board}
+                userId={userId}
+                onParameterChange={setParameter}
+                onSelectShape={selectShape}
               />
               <div className="marker-tray" aria-hidden>
                 <span className="marker-cap" style={{ background: "#e08a3c" }} />
@@ -219,6 +189,24 @@ export function TutorShell() {
       </main>
     </div>
   );
+}
+
+function AvatarVideo({ track }: { track: RemoteVideoTrack }) {
+  const ref = useRef<HTMLVideoElement>(null);
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    track.attach(el);
+    return () => {
+      track.detach(el);
+    };
+  }, [track]);
+
+  // Muted on purpose: with an avatar active the agent routes audio through it,
+  // and the audio element that IS the playback clock is already playing it.
+  // Unmuting here plays every word twice, slightly offset.
+  return <video className="avatar-video" ref={ref} autoPlay playsInline muted />;
 }
 
 /* ------------------------------------------------------------------ icons */
@@ -241,30 +229,13 @@ function BrandMark() {
   );
 }
 
-function ReplayIcon() {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M3 12a9 9 0 1 0 3-6.7" />
-      <path d="M3 4v4h4" />
-    </svg>
-  );
-}
-
-function MarkerIcon() {
-  return (
-    <svg className="marker-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M15.5 4.5l4 4L9 19l-5 1 1-5z" />
-      <path d="M13.5 6.5l4 4" />
-    </svg>
-  );
-}
-
-function MicIcon() {
+function MicIcon({ muted }: { muted: boolean }) {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
       <rect x="9" y="3" width="6" height="11" rx="3" />
       <path d="M6 11a6 6 0 0 0 12 0" />
       <path d="M12 17v4" />
+      {muted && <path d="M4 4l16 16" />}
     </svg>
   );
 }

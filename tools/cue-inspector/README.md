@@ -8,10 +8,25 @@ every data-channel frame against `@tutor/canvas-protocol`, and shows each
 `canvas_action`'s intended `cueMs` next to the audio playback position it
 actually fired at.
 
-**This is a throwaway harness, not the product.** It renders no canvas and has
-no tldraw dependency — the real whiteboard is somebody else's branch. Everything
-here is disposable except the shape of `src/cue-queue.ts`, which is the same cue
-queue the real client needs.
+**This is a throwaway harness, not the product.** It renders no canvas — the
+real whiteboard is the app at the repo root. It stayed useful after that
+client landed for two reasons: it shows drift as a *table* of every cue rather
+than the latest one, and `scripts/replay.ts` publishes a fixture into a room as
+if it were the agent, which is how you work on the board without burning STT,
+model, and TTS calls on every reload.
+
+```bash
+# Join a lesson in the app first, then push a recorded turn into its room.
+npm run replay -w @tutor/cue-inspector -- --fixture worked-quadratic --room <room>
+```
+
+The room name is shown in the app once connected. Join before starting the
+replay: frames are not redelivered to a late joiner.
+
+`src/cue-queue.ts` was the prototype for `src/live/cueQueue.ts` in the client.
+They have diverged — the client applies actions to a board instead of appending
+rows — but the turn-origin inference and the ordering rules are the same, and a
+fix to one is worth checking against the other.
 
 ```bash
 npm install                      # from the repo root

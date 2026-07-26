@@ -272,4 +272,16 @@ class TestVoiceAssignment:
 
 
 def test_health(client):
-    assert client.get("/health").json() == {"status": "ok"}
+    """Health reports each capability separately.
+
+    Every one of them is independently degradable — no LiveKit, no database, no
+    retrieval index are all runnable configurations — so a flat "ok" would be
+    true in almost no deployment. The frontend reads this to decide what to
+    offer rather than discovering it on the first failed click.
+    """
+    body = client.get("/health").json()
+
+    assert body["status"] == "ok"
+    assert body["database"] == "up"  # this test is skipped without one
+    assert body["livekit"] in {"configured", "unconfigured"}
+    assert "available" in body["retrieval"]

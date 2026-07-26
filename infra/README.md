@@ -76,6 +76,9 @@ an applied migration. Enum members are added with a new migration carrying
 | 0008 | `canvas_snapshots` |
 | 0009 | `sim_specs` |
 | 0010 | `event_log` |
+| 0011 | `merge_linked_accounts`, `uploads` — the two provenance roots |
+| 0012 | `doc_chunks` — the retrieval index |
+| 0013 | `blobs` + persona lifecycle columns |
 
 ### personas round-trips PersonaSpec
 
@@ -176,7 +179,17 @@ whatsapp, phone. README §8 also names Telegram, Slack, and Discord as Photon
 targets; they are deliberately absent until that enum grows them, so the two
 cannot drift.
 
-## Deferred to Phase 4/5 — not built yet
+### uploads and doc_chunks are live
+
+`POST /materials` on the API writes an `uploads` row and calls
+`PgVectorRetrieval.upsert_document`, so a learner's document becomes chunks the
+worker can retrieve in-loop. `apps/api/tests/test_materials.py` runs that path
+against this schema and asserts the parts the constraints exist to guarantee:
+exactly one provenance root per chunk, re-upload replacing rather than
+duplicating, and a delete that purges the chunks rather than only hiding the
+row.
+
+## Deferred to Phase 5/6/7 — not built yet
 
 These are in the §11 sketch and are intentionally absent. The extensions and
 foreign-key targets they need are already in place, so each is an additive
@@ -184,8 +197,6 @@ migration with no rework.
 
 | table | phase | notes for whoever builds it |
 | --- | --- | --- |
-| `doc_chunks` | 4 | pgvector is already enabled by 0001. Needs `embedding vector(N)` with N pinned to the chosen model, an HNSW or IVFFlat index, and `acl jsonb` — §13 requires ACLs enforced at *query* time, so the index must include what the filter needs. Provenance columns (`linked_account_id`, `remote_id`, `uri`, `chunk_ix`) exist to make per-source purge a single DELETE. |
-| `merge_linked_accounts` | 4 | `doc_chunks` and `study_tasks` both reference it; build it first. Categories: filestorage, knowledgebase, ticketing. `severed_at` must cascade to a chunk purge (§7.1). |
 | `tool_call_log` | 5 | Mirrors Merge Agent Handler call metadata for our own analytics (§7.2). Plane sync/action, connector, tool, status, latency_ms, merge_log_ref. |
 | `study_tasks` | 5 | Ticketing-category study planner (§7.2). |
 | `channel_identities` | 6 | Photon opt-in/opt-out per address. §10 makes `opt_in_at` load-bearing, not decorative — no outbound message without it. |

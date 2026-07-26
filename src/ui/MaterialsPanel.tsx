@@ -1,13 +1,23 @@
 /**
- * MaterialsPanel — a self-contained RAG upload widget (Phase 3 test affordance).
+ * MaterialsPanel — upload documents the tutor should teach from.
  *
- * Deliberately standalone: fixed-position overlay with fully INLINE styles so
- * it never collides with the Chalk redesign in index.css and needs no changes
- * to TutorShell. Upload docs here → they're ingested (extract → chunk → embed →
- * store) → the tutor's answers get grounded in them automatically.
+ * Uploads go to the API's ingestion path (extract → chunk → embed → pgvector),
+ * the same index the worker queries in-loop. There is no second retrieval stack
+ * in the browser and no client-side embedding: what the panel lists is exactly
+ * what the tutor can retrieve.
+ *
+ * Materials are per-learner, so the panel is inert until a session exists —
+ * that is where the learner id comes from. Styles stay inline and
+ * fixed-position so this widget never collides with the board's layout.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ingestFiles, getMaterials, type Material } from "../api";
+import {
+  deleteMaterial,
+  listMaterials,
+  uploadMaterial,
+  type Material,
+  type RetrievalStatus,
+} from "../api";
 
 const S: Record<string, React.CSSProperties> = {
   wrap: {
@@ -54,10 +64,12 @@ const S: Record<string, React.CSSProperties> = {
     cursor: "pointer",
     textAlign: "center",
   },
+  disabledBtn: { opacity: 0.55, cursor: "not-allowed" },
   note: { fontSize: 11, color: "#9a8f80", lineHeight: 1.4 },
   list: { display: "flex", flexDirection: "column", gap: 6, margin: 0, padding: 0, listStyle: "none" },
   item: {
     display: "flex",
+    alignItems: "center",
     justifyContent: "space-between",
     gap: 8,
     fontSize: 12,
@@ -66,8 +78,18 @@ const S: Record<string, React.CSSProperties> = {
     border: "1px solid #efe7d7",
     borderRadius: 9,
   },
-  itemName: { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
+  itemName: { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 },
   chunks: { color: "#9a8f80", flex: "none" },
+  remove: {
+    border: "none",
+    background: "transparent",
+    color: "#b0796a",
+    cursor: "pointer",
+    fontSize: 14,
+    lineHeight: 1,
+    padding: 2,
+    flex: "none",
+  },
   status: { fontSize: 12, minHeight: 16 },
   pill: {
     fontSize: 10,
@@ -80,25 +102,29 @@ const S: Record<string, React.CSSProperties> = {
   },
 };
 
-export function MaterialsPanel() {
+interface Props {
+  /** Null until a lesson starts. Materials are scoped to a learner. */
+  userId: string | null;
+}
+
+export function MaterialsPanel({ userId }: Props) {
   const [open, setOpen] = useState(true);
   const [materials, setMaterials] = useState<Material[]>([]);
+  const [retrieval, setRetrieval] = useState<RetrievalStatus | null>(null);
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState("");
-  const [provider, setProvider] = useState("");
-  const [mergeDetail, setMergeDetail] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
 
   const refresh = useCallback(async () => {
+    if (!userId) return;
     try {
-      const r = await getMaterials();
-      setMaterials(r.materials);
-      setProvider(r.provider);
-      setMergeDetail(r.merge?.detail ?? "");
-    } catch {
-      /* backend absent (static host) — leave empty */
+      const result = await listMaterials(userId);
+      setMaterials(result.materials);
+      setRetrieval(result.retrieval);
+    } catch (err) {
+      setStatus(`⚠ ${(err as Error).message}`);
     }
-  }, []);
+  }, [userId]);
 
   useEffect(() => {
     void refresh();
@@ -106,44 +132,68 @@ export function MaterialsPanel() {
 
   const onFiles = useCallback(
     async (fileList: FileList | null) => {
-      if (!fileList || fileList.length === 0) return;
+      if (!fileList?.length || !userId) return;
       const files = Array.from(fileList);
       setBusy(true);
-      setStatus(`Ingesting ${files.length} file(s)…`);
       try {
-        const r = await ingestFiles(files);
-        setMaterials(r.materials);
-        setProvider(r.provider);
-        setStatus(`Ingested. ${r.corpusSize} chunk(s) indexed — ask a question to see grounding.`);
-      } catch (e) {
-        setStatus(`⚠ ${(e as Error).message}`);
+        let indexed = 0;
+        for (const file of files) {
+          // Sequential rather than parallel: each upload embeds its chunks, and
+          // a dozen concurrent embed calls is how you rate-limit yourself.
+          setStatus(`Indexing ${file.name}…`);
+          const material = await uploadMaterial(userId, file);
+          indexed += material.chunks;
+        }
+        await refresh();
+        setStatus(`Indexed ${indexed} chunk(s). Ask the tutor about them.`);
+      } catch (err) {
+        setStatus(`⚠ ${(err as Error).message}`);
       } finally {
         setBusy(false);
         if (inputRef.current) inputRef.current.value = "";
       }
     },
-    []
+    [userId, refresh],
   );
+
+  const onRemove = useCallback(
+    async (material: Material) => {
+      if (!userId) return;
+      setBusy(true);
+      try {
+        await deleteMaterial(userId, material.uploadId);
+        await refresh();
+        setStatus(`Removed ${material.filename}.`);
+      } catch (err) {
+        setStatus(`⚠ ${(err as Error).message}`);
+      } finally {
+        setBusy(false);
+      }
+    },
+    [userId, refresh],
+  );
+
+  const disabled = !userId || busy || retrieval?.available === false;
 
   return (
     <div style={S.wrap}>
       <div style={S.card}>
         <div style={S.header} onClick={() => setOpen((o) => !o)}>
-          <span style={S.title}>📄 Materials — ground answers (RAG)</span>
+          <span style={S.title}>📄 Materials — what the tutor can teach from</span>
           <span style={{ fontSize: 12, color: "#9a8f80" }}>{open ? "▾" : "▸"}</span>
         </div>
 
         {open && (
           <div style={S.body}>
-            <label style={S.uploadBtn}>
+            <label style={{ ...S.uploadBtn, ...(disabled ? S.disabledBtn : {}) }}>
               {busy ? "Working…" : "＋ Upload PDF / DOCX / PPTX / TXT"}
               <input
                 ref={inputRef}
                 type="file"
                 multiple
-                accept=".pdf,.docx,.pptx,.txt,.md,.markdown,.csv,application/pdf"
+                accept=".pdf,.docx,.pptx,.txt,.md,.markdown,.csv"
                 style={{ display: "none" }}
-                disabled={busy}
+                disabled={disabled}
                 onChange={(e) => void onFiles(e.target.files)}
               />
             </label>
@@ -153,28 +203,43 @@ export function MaterialsPanel() {
             {materials.length > 0 ? (
               <ul style={S.list}>
                 {materials.map((m) => (
-                  <li key={m.fileId} style={S.item}>
-                    <span style={S.itemName}>{m.fileName}</span>
-                    <span style={S.chunks}>{m.chunks} chunk{m.chunks === 1 ? "" : "s"}</span>
+                  <li key={m.uploadId} style={S.item}>
+                    <span style={S.itemName} title={m.filename}>
+                      {m.filename}
+                    </span>
+                    <span style={S.chunks}>{m.chunks}</span>
+                    <button
+                      style={S.remove}
+                      title={`Remove ${m.filename} and everything indexed from it`}
+                      disabled={busy}
+                      onClick={() => void onRemove(m)}
+                    >
+                      ✕
+                    </button>
                   </li>
                 ))}
               </ul>
             ) : (
               <div style={S.note}>
-                No materials yet. Upload a document, then ask the tutor about it — the
-                answer will be grounded in what you uploaded.
+                {!userId
+                  ? "Start a lesson first — materials are saved per learner."
+                  : retrieval?.available === false
+                    ? retrieval.detail
+                    : "No materials yet. Upload a document, then ask the tutor about it."}
               </div>
             )}
 
-            <div style={S.note}>
-              {provider && (
-                <>
-                  embeddings: <span style={S.pill}>{provider}</span>
-                  <br />
-                </>
-              )}
-              {mergeDetail || "Local upload path (Merge not connected)."}
-            </div>
+            {retrieval?.embeddings && retrieval.available && (
+              <div style={S.note}>
+                embeddings: <span style={S.pill}>{retrieval.embeddings}</span>
+                {retrieval.embeddings === "hashing" && (
+                  <>
+                    <br />
+                    Keyword-ish, not semantic. Set VOYAGE_API_KEY for real retrieval.
+                  </>
+                )}
+              </div>
+            )}
           </div>
         )}
       </div>

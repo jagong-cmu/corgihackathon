@@ -1,10 +1,14 @@
-"""Persona CRUD and media upload.
+"""The tutor's HTTP backend: personas, media, sessions, and materials.
 
-Turns "custom tutor" from *edit a YAML file and restart the worker* into an API
-call. Because `PersonaSpec` is already a pydantic model, FastAPI takes it as a
-request body directly — which means full persona authoring (catchphrases,
-pedagogy, few-shot exchanges) costs almost nothing here, and the consent rules
-in §9/§10 enforce themselves on every write.
+This is the only HTTP server in the product. Three concerns live here:
+
+  - **Personas** — creating a custom tutor through the API instead of by editing
+    a YAML file and restarting the worker. `PersonaSpec` is already a pydantic
+    model, so FastAPI takes it as a request body directly and the consent rules
+    in §9/§10 enforce themselves on every write.
+  - **Sessions** (`session.py`) — minting the LiveKit token the browser joins
+    with, carrying the learner's identity where the client cannot forge it.
+  - **Materials** (`materials.py`) — the upload path into the retrieval index.
 
 Auth is a stub: `X-User-Id` names the owner. Real auth, and the §10 18+
 attestation gate (`users.adult_attested_at`), are not built.
@@ -14,6 +18,7 @@ from __future__ import annotations
 
 import logging
 import os
+from contextlib import asynccontextmanager
 from typing import Annotated, Any
 
 import psycopg
@@ -26,7 +31,10 @@ from tutor_agent.providers.elevenlabs_voices import (
     VoiceCloningUnavailableError,
 )
 
+from . import materials as materials_router
+from . import session as session_router
 from .blobs import BlobKind, BlobNotFoundError, PostgresBlobStore, blob_ref
+from .retrieval import RetrievalPlane, close_plane, open_plane
 
 log = logging.getLogger(__name__)
 
@@ -60,11 +68,29 @@ MAX_AUDIO_BYTES = 25 * 1024 * 1024
 ALLOWED_IMAGE_TYPES = {"image/jpeg", "image/png", "image/webp"}
 ALLOWED_AUDIO_TYPES = {"audio/mpeg", "audio/mp4", "audio/wav", "audio/x-wav", "audio/webm"}
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Open the retrieval index once per process, not once per request.
+
+    Connection setup is not something to pay on an upload, and the worker makes
+    the same call for the same reason on the query side.
+    """
+    app.state.retrieval = await open_plane()
+    try:
+        yield
+    finally:
+        await close_plane(app.state.retrieval)
+
+
 app = FastAPI(
     title="Tutor API",
-    description="Create custom tutors: personas, avatars, and voices.",
-    version="0.1.0",
+    description="Personas, avatars, voices, lesson sessions, and the learner's materials.",
+    version="0.2.0",
+    lifespan=lifespan,
 )
+
+app.include_router(session_router.router)
+app.include_router(materials_router.router)
 
 
 # ---------------------------------------------------------------------------
@@ -398,5 +424,32 @@ def _default_voice(voice_id: str):
 
 
 @app.get("/health")
-def health() -> dict[str, str]:
-    return {"status": "ok"}
+def health() -> dict[str, Any]:
+    """What this process can actually do right now.
+
+    Every capability here is optional and independently degradable, so a flat
+    "ok" would be a lie in most configurations. The frontend reads this to
+    decide what to offer: no LiveKit means no lesson button, no retrieval means
+    the materials panel explains itself instead of failing on first upload.
+    """
+    plane: RetrievalPlane | None = getattr(app.state, "retrieval", None)
+    livekit_ready = all(
+        os.environ.get(name)
+        for name in ("LIVEKIT_URL", "LIVEKIT_API_KEY", "LIVEKIT_API_SECRET")
+    )
+
+    database = "unknown"
+    try:
+        with psycopg.connect(resolve_dsn(), connect_timeout=2) as conn:
+            conn.execute("SELECT 1")
+        database = "up"
+    except psycopg.Error:
+        database = "down"
+
+    return {
+        "status": "ok",
+        "database": database,
+        "livekit": "configured" if livekit_ready else "unconfigured",
+        "voice_cloning": "configured" if os.environ.get("ELEVENLABS_API_KEY") else "unconfigured",
+        "retrieval": plane.status if plane is not None else {"available": False},
+    }

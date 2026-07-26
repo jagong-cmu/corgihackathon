@@ -17,6 +17,11 @@ elevenlabs = ["httpx>=0.27"]
 cartesia = ["httpx>=0.27"]
 # Optional so the offline test suite stays dependency-free.
 db = ["psycopg[binary]>=3.2"]
+postgres = ["asyncpg>=0.30"]
+embeddings = ["httpx>=0.27"]
+# Parsers for the upload path. Only the API process needs these; the voice loop
+# reads text that is already in the index.
+documents = ["pypdf>=5.1", "python-docx>=1.1", "python-pptx>=1.0"]
 livekit = [
     "livekit-agents>=0.12",
     "livekit-plugins-cartesia>=1.6.7",

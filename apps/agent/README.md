@@ -197,17 +197,34 @@ The integration tests need a database and are skipped without one:
 TUTOR_TEST_DATABASE_URL=$DATABASE_URL uv run pytest tests/test_retrieval_pg.py
 ```
 
+## Who the learner is
+
+The worker does not decide. `POST /session` on the API signs the learner's id
+into the join token's participant metadata, and `LearnerIdentity.parse` reads it
+off the participant LiveKit hands us. That is what makes it safe to pass
+straight to the retrieval ACL filter — a browser that edits its own copy simply
+fails to connect.
+
+Two consequences, both deliberate:
+
+- The session is built **after** a participant joins, not at `entrypoint`. The
+  persona comes from the same metadata and the system prompt is built from the
+  persona, so there is nothing to construct until someone is in the room.
+- A participant with no id in its token gets a session with **retrieval
+  disabled**, not a session scoped to a default id. Falling back to a shared
+  identity is how one learner's documents end up in another's context.
+
 ## Not built yet
 
 - Merge itself. The sync plane's *storage and query* half is built —
   `merge_linked_accounts`, provenance, purge-on-sever — but nothing calls Merge:
   no Link onboarding, no webhook consumers, no delta handling. `tutor ingest`
-  stands in for the ingestion worker.
+  and the API's upload endpoint stand in for the ingestion worker.
 - Merge Agent Handler (§7.2, the action plane). Deliberately not behind
   `RetrievalProvider` — it is slow, governed, and narration-covered, and putting
   the two behind one interface is how the fast path ends up awaiting the slow
   one.
 - Consent capture flow — the spec enforces the invariant; nothing records a
   consent session yet.
-- `show_source` has a schema and no renderer, because there is no canvas client
-  in this tree yet.
+- The analogy engine (§6). `spawn_sim` reaches a client that renders the spec
+  faithfully and responds to `sim_control`/`sim_update`, but nothing simulates.

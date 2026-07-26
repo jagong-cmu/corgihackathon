@@ -351,3 +351,68 @@ class TestLatencyBudget:
         elapsed_ms = (time.perf_counter() - started) * 1000
 
         assert elapsed_ms < 150, f"retrieval took {elapsed_ms:.0f}ms, budget is 150ms"
+
+
+class TestFetchChunk:
+    """`show_source` fetches by id, so the id is an attack surface.
+
+    Search decides what the model may quote. fetch_chunk decides what the client
+    may *display*, from an id that has made a round trip through a browser. The
+    two must apply the same rule, which is why `_acl_predicate` exists rather
+    than two hand-written WHERE clauses that agree on the day they were written.
+    """
+
+    async def test_a_chunk_can_be_fetched_by_id(self, store, user, upload):
+        await store.upsert_document(
+            source=SourceRef(user_id=user, upload_id=upload),
+            uri="s3://bucket/s.pdf",
+            title="Syllabus",
+            text=SYLLABUS,
+        )
+        (hit,) = await store.search("discriminant", principal=Principal.owner(user), limit=1)
+
+        fetched = await store.fetch_chunk(hit.chunk_id, principal=Principal.owner(user))
+        assert fetched is not None
+        assert fetched.text == hit.text
+        assert fetched.title == "Syllabus"
+
+    async def test_another_learner_cannot_fetch_it(self, store, user, upload, pool):
+        await store.upsert_document(
+            source=SourceRef(user_id=user, upload_id=upload),
+            uri="s3://bucket/s.pdf",
+            text=SYLLABUS,
+        )
+        (hit,) = await store.search("discriminant", principal=Principal.owner(user), limit=1)
+
+        intruder = uuid.uuid4()
+        await pool.execute(
+            "INSERT INTO users (id, email) VALUES ($1, $2)",
+            intruder,
+            f"intruder-{intruder}@example.test",
+        )
+        try:
+            intruder_principal = Principal.owner(str(intruder))
+            assert await store.fetch_chunk(hit.chunk_id, principal=intruder_principal) is None
+        finally:
+            await pool.execute("DELETE FROM users WHERE id = $1", intruder)
+
+    async def test_a_revoked_group_stops_the_fetch_on_the_next_call(self, store, user, upload):
+        """The §13 property, on the fetch path rather than the search path."""
+        await store.upsert_document(
+            source=SourceRef(user_id=user, upload_id=upload),
+            uri="s3://bucket/shared.pdf",
+            text=SYLLABUS,
+            acl=Acl.shared_with(["g:cs101"]),
+        )
+        member = Principal(user_id=user, groups=frozenset({"g:cs101"}))
+        (hit,) = await store.search("discriminant", principal=member, limit=1)
+        assert await store.fetch_chunk(hit.chunk_id, principal=member) is not None
+
+        # Same chunk, same id, group dropped — no resync in between.
+        removed = Principal(user_id=user, groups=frozenset())
+        assert await store.fetch_chunk(hit.chunk_id, principal=removed) is None
+
+    async def test_a_malformed_id_is_a_miss_not_a_crash(self, store, user):
+        # The id originates in a model's tool call and can be anything at all.
+        assert await store.fetch_chunk("../../etc/passwd", principal=Principal.owner(user)) is None
+        assert await store.fetch_chunk("", principal=Principal.owner(user)) is None

@@ -1,39 +1,44 @@
 {
   "name": "corgihackathon-whiteboard",
   "private": true,
-  "version": "0.1.1",
+  "version": "0.2.0",
   "type": "module",
-  "description": "Visual/animation subsystem for an AI voice tutor. Renders a versioned Visual Spec (JSON) as draw-on whiteboard animations.",
+  "description": "AI voice tutor. The repo root hosts the canvas client (the learner-facing lesson UI); the voice agent, API, shared protocol, and debug tooling live in the apps/, packages/, and tools/ workspaces.",
+  "workspaces": [
+    "apps/*",
+    "packages/*",
+    "tools/*"
+  ],
   "scripts": {
     "dev": "vite --host",
-    "build": "tsc -b && vite build",
+    "build": "tsc -p tsconfig.json --noEmit && vite build",
     "preview": "vite preview --host",
-    "typecheck": "tsc -b --noEmit false",
-    "test:spec": "tsx scripts/testSpec.ts",
-    "test:rag": "tsx scripts/testRag.ts"
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "build:workspaces": "npm run build --workspaces --if-present",
+    "test:workspaces": "npm run test --workspaces --if-present"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.115.0",
-    "adm-zip": "^0.6.0",
+    "@tutor/canvas-protocol": "*",
     "animejs": "^3.2.2",
     "katex": "^0.16.11",
+    "livekit-client": "^2.21.0",
     "mafs": "^0.21.0",
-    "mammoth": "^1.12.0",
-    "pdf-parse": "^2.4.5",
     "react": "^18.3.1",
-    "react-dom": "^18.3.1",
-    "zod": "^3.23.8"
+    "react-dom": "^18.3.1"
   },
   "devDependencies": {
-    "@types/adm-zip": "^0.5.8",
     "@types/animejs": "^3.1.12",
     "@types/katex": "^0.16.7",
     "@types/node": "^20.19.43",
     "@types/react": "^18.3.3",
     "@types/react-dom": "^18.3.0",
     "@vitejs/plugin-react": "^4.3.1",
+    "jsdom": "^25.0.1",
     "tsx": "^4.16.2",
     "typescript": "^5.5.3",
-    "vite": "^5.4.0"
+    "vite": "^5.4.0",
+    "vitest": "^2.1.0"
   }
 }

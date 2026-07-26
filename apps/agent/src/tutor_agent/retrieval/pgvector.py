@@ -46,25 +46,50 @@ def to_pgvector(values: Sequence[float]) -> str:
     return "[" + ",".join(repr(float(v)) for v in values) + "]"
 
 
+# The §13 rule, written once. Every path that reads a chunk composes this
+# predicate rather than restating it: search feeds the voice loop, fetch_chunk
+# feeds `show_source`, and a client that can put a chunk on the board by id must
+# not be able to reach one that search would have refused to return.
+#
+# $1 is the requester's user_id and the last placeholder is their group array;
+# callers substitute the group parameter's number because it lands in a
+# different position in each statement.
+def _acl_predicate(groups_param: str) -> str:
+    return f"""
+    user_id = $1
+      AND deleted_at IS NULL
+      AND (
+            acl_mode = 'owner'
+         OR (acl_mode = 'principals' AND acl_principals && {groups_param}::text[])
+      )
+    """
+
+
 # `<=>` is cosine distance in [0, 2]; score is the similarity the caller expects.
 # The ORDER BY is on the raw distance so the HNSW index is usable — ordering by
 # the derived score would defeat it.
-_SEARCH_SQL = """
+_SEARCH_SQL = f"""
 SELECT id::text          AS chunk_id,
        text,
        uri,
        title,
        1 - (embedding <=> $2::vector) AS score
 FROM doc_chunks
-WHERE user_id = $1
-  AND deleted_at IS NULL
+WHERE {_acl_predicate("$3")}
   AND embedding IS NOT NULL
-  AND (
-        acl_mode = 'owner'
-     OR (acl_mode = 'principals' AND acl_principals && $3::text[])
-  )
 ORDER BY embedding <=> $2::vector
 LIMIT $4
+"""
+
+# `show_source` names a chunk the model saw in its retrieved context, so it is
+# already ACL-cleared for this principal — but the fetch re-checks anyway. The
+# id travels out to the client and back, and a check that only runs on the way
+# out is not a check.
+_FETCH_SQL = f"""
+SELECT id::text AS chunk_id, text, uri, title
+FROM doc_chunks
+WHERE {_acl_predicate("$3")}
+  AND id = $2::uuid
 """
 
 _UPSERT_SQL = """
@@ -135,6 +160,7 @@ class PgVectorRetrieval:
     pool: Any
     embeddings: EmbeddingProvider
     _search_sql: str = field(default=_SEARCH_SQL, repr=False)
+    _fetch_sql: str = field(default=_FETCH_SQL, repr=False)
 
     async def search(self, query: str, *, principal: Principal, limit: int = 5) -> list[Chunk]:
         if not query.strip():
@@ -157,6 +183,34 @@ class PgVectorRetrieval:
             )
             for row in rows
         ]
+
+    async def fetch_chunk(self, chunk_id: str, *, principal: Principal) -> Chunk | None:
+        """One chunk by id, or None if it doesn't exist or isn't theirs.
+
+        Backs `show_source` (§5.2): the model names a chunk id from its
+        retrieved context and the client fetches the text to put on the board.
+        Returns None rather than raising for a miss — the board renders an
+        "unavailable" card and the lesson continues.
+        """
+        try:
+            rows = await self.pool.fetch(
+                self._fetch_sql, principal.user_id, chunk_id, list(principal.groups)
+            )
+        except Exception:
+            # A malformed id reaches Postgres as a failed uuid cast. That is a
+            # 404, not a 500 — the id came from a model and can be anything.
+            log.warning("chunk fetch failed for %r", chunk_id, exc_info=True)
+            return None
+        if not rows:
+            return None
+        row = rows[0]
+        return Chunk(
+            chunk_id=row["chunk_id"],
+            text=row["text"],
+            uri=row["uri"],
+            title=row["title"],
+            score=1.0,
+        )
 
     # -- ingestion ----------------------------------------------------------
     #

@@ -13,12 +13,26 @@ from __future__ import annotations
 
 from .documents import DocumentChunk, chunk_document, normalize
 from .embeddings import EMBEDDING_DIM, EmbeddingProvider, HashingEmbeddings
+from .extract import (
+    SUPPORTED_EXTENSIONS,
+    ExtractedDocument,
+    ExtractionDependencyError,
+    UnsupportedDocumentError,
+    detect_kind,
+    extract_text,
+)
 
 __all__ = [
     "EMBEDDING_DIM",
+    "SUPPORTED_EXTENSIONS",
     "DocumentChunk",
     "EmbeddingProvider",
+    "ExtractedDocument",
+    "ExtractionDependencyError",
     "HashingEmbeddings",
+    "UnsupportedDocumentError",
     "chunk_document",
+    "detect_kind",
+    "extract_text",
     "normalize",
 ]

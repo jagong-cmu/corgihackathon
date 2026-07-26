@@ -15,10 +15,12 @@ import json
 import logging
 import os
 import time
+from dataclasses import dataclass
 
 from livekit import agents, rtc
 from livekit.plugins import elevenlabs as lk_elevenlabs
 
+from ..core.protocol import action_names, protocol_version
 from ..core.session import SessionConfig, TutorSession
 from ..persona import get_persona
 from ..providers.anthropic_llm import AnthropicLLM
@@ -92,10 +94,46 @@ VAD_OPTIONS = {
 }
 
 
+@dataclass(frozen=True)
+class LearnerIdentity:
+    """Who joined, from the signed token the API minted.
+
+    The browser never gets to state this for itself. `POST /session` puts the
+    learner's id in the participant metadata before signing, so by the time it
+    reaches us LiveKit has already verified it — which is what makes it safe to
+    hand straight to the retrieval ACL filter.
+    """
+
+    user_id: str
+    persona_id: str
+
+    @staticmethod
+    def parse(participant: rtc.RemoteParticipant) -> LearnerIdentity:
+        try:
+            claims = json.loads(participant.metadata or "{}")
+        except json.JSONDecodeError:
+            claims = {}
+        if not isinstance(claims, dict):
+            claims = {}
+
+        user_id = claims.get("user_id")
+        if not user_id:
+            # An old client, or someone joining with a hand-rolled token. Run
+            # the lesson, but with no retrieval scope — falling back to a shared
+            # id here would serve one learner's materials to another.
+            log.warning(
+                "participant %s joined with no user_id in its token metadata — "
+                "retrieval will be disabled for this session",
+                participant.identity,
+            )
+            user_id = ""
+        return LearnerIdentity(
+            user_id=str(user_id), persona_id=str(claims.get("persona") or DEFAULT_PERSONA)
+        )
+
+
 async def entrypoint(ctx: agents.JobContext) -> None:
     await ctx.connect()
-    persona = get_persona(DEFAULT_PERSONA)
-    log.info("session starting with persona %s", persona.id)
 
     # Publish the tutor's audio track before anything else, so the first
     # synthesized segment has somewhere to go the instant it exists.
@@ -105,8 +143,25 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         track, rtc.TrackPublishOptions(source=rtc.TrackSource.SOURCE_MICROPHONE)
     )
 
+    # The persona and the retrieval scope are both properties of *who joined*,
+    # and the system prompt is built from the persona — so the session cannot be
+    # constructed until someone is in the room. The avatar joins later, after
+    # this returns, so it can never be mistaken for the learner.
+    learner = LearnerIdentity.parse(await _wait_for_learner(ctx))
+    persona = get_persona(learner.persona_id)
+    log.info(
+        "session starting: persona %s, learner %s",
+        persona.id,
+        learner.user_id or "(anonymous)",
+    )
+
     adapter = LiveKitAdapter(room=ctx.room, audio_source=source)
     pool, retrieval = await _maybe_open_retrieval()
+    if retrieval is not None and not learner.user_id:
+        # Fail closed. A search with no principal is a search with no ACL.
+        log.warning("retrieval index is open but this session has no learner id — not using it")
+        retrieval = None
+
     session = TutorSession(
         persona=persona,
         llm=AnthropicLLM(model="claude-sonnet-5", effort="low"),
@@ -116,7 +171,7 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         channel=adapter,
         retrieval=retrieval,
         config=SessionConfig(),
-        user_id=os.environ.get("TUTOR_USER_ID", "dev"),
+        user_id=learner.user_id or "anonymous",
     )
     if pool is not None:
         ctx.add_shutdown_callback(pool.close)
@@ -207,9 +262,12 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         except (UnicodeDecodeError, json.JSONDecodeError):
             log.warning("undecodable data packet from %s", packet.participant)
             return
-        if message.get("type") == "student_event":
+        kind = message.get("type")
+        if kind == "student_event":
             # Folded into the next turn's context (§5.3), not acted on now.
             session.student_events([message])
+        elif kind == "client_hello":
+            _log_client_hello(message, packet.participant)
 
     # -- inbound: the learner speaking --------------------------------------
 
@@ -277,6 +335,55 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+
+async def _wait_for_learner(ctx: agents.JobContext) -> rtc.RemoteParticipant:
+    """Block until a human is in the room.
+
+    Skips the avatar's own participant. That matters on a reconnect: the avatar
+    from a previous job can still be in the room when the next one starts, and
+    treating it as the learner would build the session with no user id and then
+    transcribe the tutor's own voice back into itself.
+    """
+    avatars = known_avatar_identities()
+    while True:
+        for participant in ctx.room.remote_participants.values():
+            if participant.identity not in avatars:
+                return participant
+        await ctx.wait_for_participant()
+
+
+def _log_client_hello(message: dict, participant: str | None) -> None:
+    """Record what the canvas client can render (§4).
+
+    Only logged today. The protocol's intent is that a client on an older
+    version gets a reduced action set rather than silent drops, which means
+    filtering `canvas_tool_definitions()` by `supportedActions` — worth doing
+    the first time two clients are in the field on different versions, and
+    premature before that. What this does give you now is the answer to "why did
+    nothing render", which is otherwise a genuinely hard thing to find out.
+    """
+    theirs = str(message.get("protocolVersion", "unknown"))
+    ours = protocol_version()
+    supported = set(message.get("supportedActions") or [])
+    known = set(action_names())
+
+    log.info("canvas client %s on protocol %s, %d actions", participant, theirs, len(supported))
+
+    if theirs != ours:
+        log.warning(
+            "protocol mismatch: client %s, worker %s. Actions added since %s will be dropped "
+            "silently by that client.",
+            theirs,
+            ours,
+            theirs,
+        )
+    missing = known - supported
+    if missing:
+        log.warning(
+            "client cannot render %s — the model will still be offered them",
+            ", ".join(sorted(missing)),
+        )
 
 
 async def _maybe_open_retrieval():

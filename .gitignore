@@ -24,3 +24,6 @@ __pycache__/
 .ruff_cache/
 
 # uv.lock IS committed — it pins the agent's dependency graph.
+
+# TypeScript incremental build state
+*.tsbuildinfo

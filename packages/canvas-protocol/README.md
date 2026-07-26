@@ -31,10 +31,11 @@ npm run export-schemas -w @tutor/canvas-protocol
 # -> packages/canvas-protocol/schemas/canvas-protocol.json  (committed)
 ```
 
-**Canvas client (`/apps/web`)** — calls `safeParseAgentMessage()` on every
+**Canvas client (repo root, `src/`)** — calls `safeParseAgentMessage()` on every
 inbound frame and applies only what validates. It returns `null` rather than
 throwing, because a dropped action is invisible and a thrown exception ends the
-lesson (§13).
+lesson (§13). The single validation boundary is `src/live/frames.ts`; nothing
+else in the client parses a frame.
 
 ## Adding an action
 
@@ -67,17 +68,29 @@ Current fixtures:
 - `collision-newton-third` — the README's demo, including a student slider
   change, a barge-in cancel, and the follow-up turn
 
+## Settled since both sides were built
+
+- **`strict: true` is off by default, and that is the right answer.** Tested
+  against the live API: 11 strict tools fail with "the compiled grammar is too
+  large". Optional properties turned out to be fine — that was the original
+  hypothesis and it was wrong. The long note in
+  `apps/agent/src/tutor_agent/core/protocol.py` records what actually breaks
+  (numeric constraints, tuple `prefixItems`, objects that cannot be closed).
+- **`GraphSpec` survived contact with Mafs.** `src/board/shapes/GraphShape.tsx`
+  implements functions, points, tangents, shaded regions, and draggable
+  parameters against it unchanged. Tangents are computed by central difference
+  rather than symbolically, so the slope drawn always matches the curve drawn.
+- **Section-relative coordinates are advisory here and load-bearing in the
+  client.** Still not range-checked — a slightly out-of-bounds shape should
+  render rather than be dropped — but the client lays out a true 800x600
+  logical page and scales it as one unit, so `x: 420` really does mean "the
+  right half". A shape's width is bounded by the next shape placed to its right,
+  which is how "steps on the left, graph on the right" is honoured without
+  widths ever crossing the wire.
+
 ## Known unknowns
 
-- **`strict: true` with optional properties.** Actions with defaults (`reveal`,
-  `holdMs`, `style`) leave those keys out of `required`. If Anthropic's strict
-  tool use rejects that, pass `{ strict: false }` to `canvasToolDefinitions()`.
-  Verify on the first real API call — this has not been checked against the
-  live API.
-- **`GraphSpec` is a first guess.** It was written against §5.1's one-line
-  description, not against a working Mafs integration. Expect the canvas owner
-  to revise it once `GraphShape` exists.
-- **Section-relative coordinates are advisory.** The schemas document the
-  0–800 / 0–600 convention in the field descriptions but do not range-check it,
-  because a slightly out-of-bounds shape should still render rather than be
-  dropped.
+- **Sub-target syntax is convention, not schema.** `term:3` and `line:2` are
+  described in prose on `HighlightParams.target.sub` and parsed by the client.
+  Nothing validates that the shape being highlighted actually has a term 3, and
+  an out-of-range index silently highlights nothing.
