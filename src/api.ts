@@ -40,12 +40,28 @@ export interface MaterialsResponse {
   merge: { ok: boolean; detail: string };
 }
 
+/**
+ * No backend on this host (static hosting like GitHub Pages). If the user has
+ * supplied an Anthropic key (see llmClient.ts) we ask Claude DIRECTLY from the
+ * browser so any question still gets a real answer + visual; otherwise we fall
+ * back to the keyword mock.
+ */
+async function offlineTurn(userQuery: string): Promise<TurnResponse> {
+  try {
+    const { hasAiKey, clientAiTurn } = await import("./llmClient");
+    if (hasAiKey()) return await clientAiTurn(userQuery);
+  } catch {
+    /* AI unavailable/failed — fall through to the deterministic mock */
+  }
+  const { clientMockTurn } = await import("./mock");
+  return clientMockTurn(userQuery);
+}
+
 /** Ask the tutor a question; returns spoken text + a validated visual spec. */
 export async function askTutor(
   userQuery: string,
   retrievedContext?: string[]
 ): Promise<TurnResponse> {
-  const { clientMockTurn } = await import("./mock");
   let res: Response;
   try {
     res = await fetch("/api/turn", {
@@ -54,20 +70,16 @@ export async function askTutor(
       body: JSON.stringify({ userQuery, retrievedContext }),
     });
   } catch {
-    return clientMockTurn(userQuery);
+    return offlineTurn(userQuery);
   }
-  // No backend on this host (static hosting like GitHub Pages): a POST to a
-  // path that only serves static files returns 404 (not found) or 405 (method
-  // not allowed). Either way, fall back to the client-side mock.
-  if (res.status === 404 || res.status === 405) return clientMockTurn(userQuery);
-  if (!res.ok) {
-    const detail = await res.json().catch(() => ({}));
-    throw new Error(detail.error ?? `request failed (${res.status})`);
-  }
+  // Any non-OK response means there's no usable backend on this host (static
+  // hosting returns 404 / 405 / 501 / 403 depending on the provider) — fall
+  // back to the offline turn (browser AI if a key is set, else the mock).
+  if (!res.ok) return offlineTurn(userQuery);
   try {
     return (await res.json()) as TurnResponse;
   } catch {
-    return clientMockTurn(userQuery);
+    return offlineTurn(userQuery);
   }
 }
 
