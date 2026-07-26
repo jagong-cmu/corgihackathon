@@ -14,5 +14,15 @@ export default defineConfig({
     strictPort: false,
     // Allow the app to be served through dev tunnels (e.g. *.trycloudflare.com).
     allowedHosts: true,
+    proxy: {
+      // The persona/voice/avatar API (apps/api, FastAPI). Same origin from the
+      // browser's point of view — no CORS. The UI degrades gracefully when the
+      // API isn't running.
+      "/tutor-api": {
+        target: process.env.TUTOR_API_URL ?? "http://localhost:8000",
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/tutor-api/, ""),
+      },
+    },
   },
 });

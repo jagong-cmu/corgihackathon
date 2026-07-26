@@ -1,9 +1,14 @@
 /**
  * TutorShell — the app frame.
  *
- *   - LEFT: the tutor "stage" — an intentional placeholder reserved for the
- *     voice avatar a teammate is building — plus the current spoken line.
+ *   - LEFT: the tutor stage — a LIVE voice session (LiveKit): the tutor
+ *     listens, talks back, and shows an avatar face when the persona has one —
+ *     plus the current spoken line for the whiteboard demos.
  *   - RIGHT: the whiteboard where the visual subsystem draws.
+ *
+ * The two sides are independent on purpose: the whiteboard is driven by the
+ * Ask bar / scene switcher exactly as before, and the live voice session
+ * doesn't touch the animations (canvas-action sync is a separate project).
  *
  * Two ways to drive the whiteboard:
  *   - Ask bar: type a question -> POST /api/turn -> live { spokenText,
@@ -12,6 +17,8 @@
  */
 import { useCallback, useMemo, useRef, useState, type FormEvent } from "react";
 import { WhiteboardRenderer } from "../render/WhiteboardRenderer";
+import { LiveTutorStage } from "../live/LiveTutorStage";
+import { TutorsPanel } from "./TutorsPanel";
 import type { RevealApi } from "../voice/voiceInterface";
 import {
   functionPlotExample,
@@ -72,6 +79,10 @@ export function TutorShell() {
   const [live, setLive] = useState<TurnResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const [tutorsOpen, setTutorsOpen] = useState(false);
+  // Bumped whenever the panel changes the library, so the picker re-fetches.
+  const [tutorsVersion, setTutorsVersion] = useState(0);
 
   const demo = useMemo(
     () => DEMOS.find((d) => d.key === demoKey) ?? DEMOS[0],
@@ -144,6 +155,14 @@ export function TutorShell() {
             <ReplayIcon />
             Replay
           </button>
+          <button
+            className="icon-btn"
+            onClick={() => setTutorsOpen(true)}
+            title="Create and manage custom tutors"
+          >
+            <TutorsIcon />
+            Tutors
+          </button>
         </div>
       </header>
 
@@ -172,19 +191,11 @@ export function TutorShell() {
       </form>
 
       <main className="tutor-body">
-        {/* LEFT: reserved tutor stage + spoken line */}
+        {/* LEFT: live tutor stage (voice + avatar) + spoken line */}
         <section className="tutor-col" aria-label="Tutor">
           <div className="tutor-stage">
             <div className="tutor-portrait">
-              <div className="tutor-orb">
-                <MicIcon />
-              </div>
-              <div className="tutor-label">Your tutor lives here</div>
-              <p className="tutor-sub">
-                Reserved for the voice avatar your teammate is building — it speaks
-                each line while Trudy draws.
-              </p>
-              <span className="tutor-chip">Voice · coming soon</span>
+              <LiveTutorStage refresh={tutorsVersion} />
             </div>
           </div>
 
@@ -217,6 +228,12 @@ export function TutorShell() {
           </div>
         </section>
       </main>
+
+      <TutorsPanel
+        open={tutorsOpen}
+        onClose={() => setTutorsOpen(false)}
+        onChanged={() => setTutorsVersion((v) => v + 1)}
+      />
     </div>
   );
 }
@@ -259,12 +276,13 @@ function MarkerIcon() {
   );
 }
 
-function MicIcon() {
+function TutorsIcon() {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-      <rect x="9" y="3" width="6" height="11" rx="3" />
-      <path d="M6 11a6 6 0 0 0 12 0" />
-      <path d="M12 17v4" />
+      <circle cx="9" cy="8" r="3.2" />
+      <path d="M3.5 19c.6-3.2 2.8-5 5.5-5s4.9 1.8 5.5 5" />
+      <path d="M16 5.5a3.2 3.2 0 0 1 0 5" />
+      <path d="M17.5 14.2c1.6.7 2.7 2.2 3 4.8" />
     </svg>
   );
 }

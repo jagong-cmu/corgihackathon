@@ -20,7 +20,7 @@ from livekit import agents, rtc
 from livekit.plugins import elevenlabs as lk_elevenlabs
 
 from ..core.session import SessionConfig, TutorSession
-from ..persona import get_persona
+from ..persona import PersonaNotFoundError, PersonaSpec, get_persona
 from ..providers.anthropic_llm import AnthropicLLM
 from ..providers.factory import make_tts
 from ..providers.livekit_avatar import (
@@ -94,7 +94,12 @@ VAD_OPTIONS = {
 
 async def entrypoint(ctx: agents.JobContext) -> None:
     await ctx.connect()
-    persona = get_persona(DEFAULT_PERSONA)
+    # Which tutor teaches this room is the room's choice, not the process's:
+    # the session endpoint (server/live.ts) names a persona in the room
+    # metadata. Rooms without metadata keep the old TUTOR_PERSONA behavior.
+    persona_slug, owner = _persona_request(ctx.room.metadata)
+    # psycopg is synchronous; one lookup at session start, off the event loop.
+    persona = await asyncio.to_thread(_load_persona, persona_slug, owner)
     log.info("session starting with persona %s", persona.id)
 
     # Publish the tutor's audio track before anything else, so the first
@@ -116,7 +121,8 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         channel=adapter,
         retrieval=retrieval,
         config=SessionConfig(),
-        user_id=os.environ.get("TUTOR_USER_ID", "dev"),
+        # Retrieval ACLs follow the learner the room was created for.
+        user_id=owner or os.environ.get("TUTOR_USER_ID", "dev"),
     )
     if pool is not None:
         ctx.add_shutdown_callback(pool.close)
@@ -277,6 +283,63 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+
+def _persona_request(metadata: str | None) -> tuple[str, str | None]:
+    """(persona slug, owner) for this room.
+
+    The session endpoint (server/live.ts) writes {"persona": ..., "owner": ...}
+    into the room metadata at creation. Rooms created any other way — a
+    livekit-server --dev join, the cue-inspector replay script — carry no
+    metadata and fall back to TUTOR_PERSONA, so every existing workflow keeps
+    working unchanged.
+    """
+    if metadata:
+        try:
+            data = json.loads(metadata)
+        except json.JSONDecodeError:
+            log.warning("room metadata is not JSON — using the default persona")
+        else:
+            if isinstance(data, dict) and data.get("persona"):
+                return str(data["persona"]), data.get("owner") or None
+    return DEFAULT_PERSONA, None
+
+
+def _load_persona(slug: str, owner: str | None) -> PersonaSpec:
+    """Resolve a persona: database first, curated YAML second.
+
+    Custom tutors created through apps/api live in Postgres; the YAML dir holds
+    only the curated library. A missing or unreachable database degrades to
+    exactly the behavior the worker had before (YAML only) rather than taking
+    the voice loop down.
+    """
+    dsn = os.environ.get("DATABASE_URL")
+    if dsn:
+        try:
+            import psycopg
+
+            from ..persona.store import PostgresPersonaStore
+
+            with psycopg.connect(dsn, autocommit=True) as conn:
+                store = PostgresPersonaStore(conn)
+                # Owner's persona shadows a library persona with the same slug.
+                for scope in (owner, None) if owner else (None,):
+                    try:
+                        persona = store.get(slug, scope)
+                    except PersonaNotFoundError:
+                        continue
+                    if persona.is_revoked:
+                        # Same rule get_persona() enforces for YAML (§9):
+                        # revoked means refuse, never fall through.
+                        raise PersonaNotFoundError(
+                            f"persona {slug!r} was revoked and can no longer be used"
+                        )
+                    return persona
+        except PersonaNotFoundError:
+            raise
+        except Exception:
+            log.exception("persona store lookup failed — trying the YAML library")
+    return get_persona(slug)
 
 
 async def _maybe_open_retrieval():

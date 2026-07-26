@@ -6,11 +6,14 @@
  *   GET  /api/materials   -> corpus status + ingested docs                (Phase 3)
  *   POST /api/merge/sync  -> pull from Merge if configured, else no-op     (Phase 3)
  *   GET  /api/health      -> llm + embeddings provider + corpus + merge check
+ *   POST /api/live/session -> LiveKit room + learner token for the voice tutor
+ *   GET  /api/live/health  -> { configured } — is LiveKit set up on this host?
  *
  * One origin — no CORS, no second process.
  */
 import type { Plugin, Connect } from "vite";
 import { runTurn } from "./turn";
+import { createLiveSession, liveKitConfigured } from "./live";
 import { llmAvailable } from "./llm";
 import { checkContentBodyAvailable, mergeSyncIngest, mergeConfigured } from "./merge";
 import { ingestDocument, listMaterials, corpusSize, provider, retrieve } from "./rag";
@@ -123,6 +126,28 @@ export function whiteboardApiPlugin(): Plugin {
         } catch (e) {
           json(res, 500, { error: (e as Error).message });
         }
+      });
+
+      // ---- Live voice tutor: room + token bootstrap ----
+      server.middlewares.use("/api/live/session", async (req, res, next) => {
+        if (req.method !== "POST") return next();
+        try {
+          const body = JSON.parse((await readBody(req)) || "{}");
+          if (!liveKitConfigured()) {
+            return json(res, 503, {
+              error:
+                "LiveKit is not configured. Set LIVEKIT_URL, LIVEKIT_API_KEY " +
+                "and LIVEKIT_API_SECRET in .env.local at the repo root.",
+            });
+          }
+          json(res, 200, await createLiveSession(body));
+        } catch (e) {
+          json(res, 500, { error: (e as Error).message });
+        }
+      });
+
+      server.middlewares.use("/api/live/health", async (_req, res) => {
+        json(res, 200, { configured: liveKitConfigured() });
       });
 
       // ---- Health ----
