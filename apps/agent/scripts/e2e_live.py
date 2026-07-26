@@ -144,17 +144,37 @@ async def main() -> int:
     parser.add_argument("--settle", type=float, default=25.0,
                         help="seconds to keep listening after the last wav")
     parser.add_argument("--min-voiced-ms", type=float, default=2000.0)
+    parser.add_argument("--join-room", default=None,
+                        help="join an EXISTING room as a second learner instead "
+                             "of minting a session (for driving a browser test)")
     args = parser.parse_args()
 
-    async with httpx.AsyncClient() as client:
-        res = await client.post(
-            f"{args.session_url}/api/live/session",
-            json={"personaId": args.persona},
-            timeout=15.0,
+    if args.join_room:
+        import os
+
+        from livekit import api as lk_api
+
+        token = (
+            lk_api.AccessToken(
+                api_key=os.environ["LIVEKIT_API_KEY"],
+                api_secret=os.environ["LIVEKIT_API_SECRET"],
+            )
+            .with_identity("e2e-speaker")
+            .with_grants(lk_api.VideoGrants(room_join=True, room=args.join_room))
+            .to_jwt()
         )
-        res.raise_for_status()
-        session = res.json()
-    print(f"[e2e] session minted: room={session.get('room')}", flush=True)
+        session = {"url": os.environ["LIVEKIT_URL"], "token": token, "room": args.join_room}
+        print(f"[e2e] joining existing room: {args.join_room}", flush=True)
+    else:
+        async with httpx.AsyncClient() as client:
+            res = await client.post(
+                f"{args.session_url}/api/live/session",
+                json={"personaId": args.persona},
+                timeout=15.0,
+            )
+            res.raise_for_status()
+            session = res.json()
+        print(f"[e2e] session minted: room={session.get('room')}", flush=True)
 
     room = rtc.Room()
     collector = Collector()
