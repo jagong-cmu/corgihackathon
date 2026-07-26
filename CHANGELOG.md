@@ -3,6 +3,21 @@
 All notable changes to Chalk are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/) · versions are `MAJOR.MINOR.PATCH.MICRO`.
 
+## [0.1.4.0] - 2026-07-26
+
+### Changed
+- Tutor lessons flow in real time. Step reveals now ride inside the tutor's
+  narration as inline markers instead of tool calls, so a five-step lesson no
+  longer pauses for a model round trip between every beat — the tutor speaks
+  one continuous stream and the board draws along with it.
+- The whiteboard appears the instant the tutor starts answering: the board
+  mount is sent the moment the visual is authored instead of after the first
+  sentence finishes synthesizing.
+
+### Fixed
+- A lesson can no longer end with a mounted-but-blank board: any step the
+  tutor listed but never revealed draws at the end of the answer.
+
 ## [0.1.3.0] - 2026-07-26
 
 ### Fixed
