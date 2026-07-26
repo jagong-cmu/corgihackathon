@@ -7,9 +7,12 @@
  *   - RIGHT: the whiteboard "learning terminal" where the visual subsystem
  *     draws.
  *
- * The controls (spec picker + Replay) exist only to exercise the renderer.
+ * Two ways to drive the whiteboard:
+ *   - Ask bar (Phase 2): type a question -> POST /api/turn -> live
+ *     { spokenText, visualSpec } from the LLM -> rendered.
+ *   - Test-scene picker: hardcoded specs to exercise the renderer offline.
  */
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState, type FormEvent } from "react";
 import { WhiteboardRenderer } from "../render/WhiteboardRenderer";
 import type { RevealApi } from "../voice/voiceInterface";
 import {
@@ -18,6 +21,7 @@ import {
   brokenExample,
 } from "../spec/examples";
 import type { VisualSpec } from "../spec/visualSpec";
+import { askTutor, type TurnResponse } from "../api";
 
 interface Demo {
   key: string;
@@ -67,10 +71,20 @@ export function TutorShell() {
   const [playToken, setPlayToken] = useState(0);
   const revealApiRef = useRef<RevealApi | null>(null);
 
+  // Live LLM turn (Phase 2).
+  const [query, setQuery] = useState("");
+  const [live, setLive] = useState<TurnResponse | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
   const demo = useMemo(
     () => DEMOS.find((d) => d.key === demoKey) ?? DEMOS[0],
     [demoKey]
   );
+
+  // The whiteboard is driven by the live turn if present, else the test scene.
+  const activeSpec: unknown = live ? live.visualSpec : demo.spec;
+  const activeSpokenText = live ? live.spokenText : demo.spokenText;
 
   const onRevealApi = useCallback((api: RevealApi) => {
     revealApiRef.current = api;
@@ -80,8 +94,30 @@ export function TutorShell() {
 
   const selectDemo = useCallback((key: string) => {
     setDemoKey(key);
+    setLive(null); // dropping back to offline test scenes
+    setError(null);
     setPlayToken((t) => t + 1);
   }, []);
+
+  const submit = useCallback(
+    async (e: FormEvent) => {
+      e.preventDefault();
+      const q = query.trim();
+      if (!q || loading) return;
+      setLoading(true);
+      setError(null);
+      try {
+        const res = await askTutor(q);
+        setLive(res);
+        setPlayToken((t) => t + 1);
+      } catch (err) {
+        setError((err as Error).message);
+      } finally {
+        setLoading(false);
+      }
+    },
+    [query, loading]
+  );
 
   return (
     <div className="tutor-shell">
@@ -90,10 +126,11 @@ export function TutorShell() {
         <div className="controls">
           <label className="control-label">Test scene:</label>
           <select
-            value={demoKey}
+            value={live ? "" : demoKey}
             onChange={(e) => selectDemo(e.target.value)}
             className="demo-select"
           >
+            {live && <option value="">— live answer —</option>}
             {DEMOS.map((d) => (
               <option key={d.key} value={d.key}>
                 {d.label}
@@ -106,6 +143,27 @@ export function TutorShell() {
         </div>
       </header>
 
+      {/* Ask bar (Phase 2): drives the whiteboard from a live LLM turn */}
+      <form className="ask-bar" onSubmit={submit}>
+        <input
+          className="ask-input"
+          type="text"
+          value={query}
+          placeholder="Ask the tutor…  e.g. “graph x^2 and show the tangent at x=1”  or  “explain what a derivative is”"
+          onChange={(e) => setQuery(e.target.value)}
+          disabled={loading}
+        />
+        <button className="ask-btn" type="submit" disabled={loading || !query.trim()}>
+          {loading ? "Thinking…" : "Ask"}
+        </button>
+        {live && (
+          <span className={`ask-mode ${live.llm ? "live" : "mock"}`}>
+            {live.llm ? "live LLM" : "offline mock"}
+          </span>
+        )}
+        {error && <span className="ask-error">⚠ {error}</span>}
+      </form>
+
       <main className="tutor-body">
         {/* LEFT: person placeholder (voice teammate owns the real avatar) */}
         <section className="person-panel" aria-label="Tutor (voice) — placeholder">
@@ -116,7 +174,7 @@ export function TutorShell() {
           </div>
           <div className="narration">
             <div className="narration-label">Narration (spokenText)</div>
-            <p className="narration-text">{demo.spokenText}</p>
+            <p className="narration-text">{activeSpokenText}</p>
             <div className="narration-note">
               TTS reads this immediately; visuals reveal async via syncCues.
             </div>
@@ -127,8 +185,8 @@ export function TutorShell() {
         <section className="whiteboard-panel" aria-label="Whiteboard">
           <div className="whiteboard-frame">
             <WhiteboardRenderer
-              key={`${demo.key}-${playToken}`}
-              rawSpec={demo.spec}
+              key={`${live ? "live" : demo.key}-${playToken}`}
+              rawSpec={activeSpec}
               autoPlay
               playToken={playToken}
               onRevealApi={onRevealApi}

@@ -25,33 +25,34 @@ validator in `src/spec/validate.ts`.
 
 1. **Deterministic** (`mafs` + `katex`) — real math: function plots, tangents,
    vectors, number lines. Reliable core, built first.
-2. **Freeform** (authored **Trudy** corgi SVG rig + `animejs`) — analogy/mascot
+2. **Freeform** (authored mascot SVG rig + `animejs`) — analogy/mascot
    explanations. Home of the hero demo.
 
 ## Run it
 
 ```bash
 npm install
-npm run dev        # Vite dev server (Phase 1: hardcoded specs)
+npm run dev        # Vite dev server + /api backend on one origin
 npm run test:spec  # validate the spec contract + math evaluator (no browser)
 ```
 
-Each demo is directly linkable: `/?demo=fn`, `/?demo=trudy`, `/?demo=broken`.
+Set `ANTHROPIC_API_KEY` for live LLM answers; without it the Ask bar uses an
+offline mock. Each test scene is directly linkable: `/?demo=fn`, `/?demo=freeform`, `/?demo=broken`.
 
 ## Build order / phase status
 
 - **Phase 0 — Scaffold + spec contract** ✅ `VisualSpec` type, zod validator, KaTeX fallback.
 - **Phase 1 — Test UI + Track 1 slice** ✅ Tutor shell (person-left / whiteboard-right); hardcoded `function_plot` draws on + animated tangent; mocked reveal cues + `revealStep`.
-- **Phase 2 — Live LLM output** ⬜ swap hardcoded spec for `POST /api/turn` → `{ spokenText, visualSpec }`.
+- **Phase 2 — Live LLM output** ✅ `POST /api/turn` (Anthropic SDK, model `claude-opus-4-8`) returns `{ spokenText, visualSpec }`; validated server-side with the shared zod schema, retry-once, then `equation` fallback. Ask bar in the UI drives the whiteboard live. Offline mock when `ANTHROPIC_API_KEY` is unset.
 - **Phase 3 — Merge / RAG** ⬜ content-body check first, then extract→chunk→embed→store + top-k retrieval.
-- **Phase 4 — Trudy rig + freeform renderer** ⬜ component-based SVG rig, animejs pose/expression states.
-- **Phase 5 — Corgi/Trudy hero demo** ⬜ Merge-grounded, synced via mocked cues.
+- **Phase 4 — Mascot rig + freeform renderer** ⬜ component-based SVG rig, animejs pose/expression states (character TBD — pending product decision).
+- **Phase 5 — Hero demo** ⬜ Merge-grounded, synced via mocked cues.
 - **Phase 6 — Polish + `vector_diagram` + `number_line`** ⬜.
 
 ## Guardrails
 
 - The spec is validated (zod) before every render; invalid/unknown → KaTeX
-  fallback, **never a white screen**.
+  fallback, **never a white screen**. The server validates too before returning.
 - Generation ≠ render: the LLM only emits the JSON spec.
 - Never block speech on a visual; `spokenText` emits immediately.
 - Voice stays mocked behind `revealStep(stepId)` (see
@@ -67,9 +68,10 @@ src/
     tracks/        FunctionPlot (Track 1), FreeformScene (Track 2), EquationFallback
     hooks/         useDrawSequence (reveal orchestration)
     mathfn.ts      safe single-variable function evaluator
-  mascot/          Trudy SVG rig (Phase 4 build-out)
+  mascot/          mascot SVG rig (Phase 4 build-out)
   voice/           voice module interface + mock timer driver
   ui/              TutorShell test harness (person-left / whiteboard-right)
-server/            LLM / Merge / RAG stubs (Phase 2/3)
+  api.ts           frontend client for POST /api/turn
+server/            LLM turn (prompt/llm/turn), Merge/RAG stubs, Vite API plugin
 scripts/           testSpec.ts — headless contract self-test
 ```

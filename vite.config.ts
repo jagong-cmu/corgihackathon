@@ -1,9 +1,10 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
+import { whiteboardApiPlugin } from "./server/vitePlugin";
 
 // The dev server binds to 0.0.0.0 so the container port can be exposed for testing.
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), whiteboardApiPlugin()],
   server: {
     host: true,
     port: 5173,

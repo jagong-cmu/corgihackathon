@@ -12,6 +12,7 @@
     "test:spec": "tsx scripts/testSpec.ts"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.115.0",
     "animejs": "^3.2.2",
     "katex": "^0.16.11",
     "mafs": "^0.21.0",

@@ -42,6 +42,29 @@ body { background: var(--bg); color: var(--ink); }
 }
 .replay-btn:hover { filter: brightness(1.1); }
 
+/* Ask bar (live LLM) */
+.ask-bar {
+  display: flex; align-items: center; gap: 10px;
+  padding: 12px 16px; background: #0b1220; border-bottom: 1px solid #1e293b;
+}
+.ask-input {
+  flex: 1; padding: 10px 14px; border-radius: 10px;
+  border: 1px solid #334155; background: #111827; color: #e2e8f0; font-size: 14px;
+}
+.ask-input::placeholder { color: #64748b; }
+.ask-input:focus { outline: none; border-color: var(--accent); }
+.ask-btn {
+  padding: 10px 20px; border-radius: 10px; border: 1px solid var(--accent);
+  background: var(--accent); color: white; font-size: 14px; font-weight: 600; cursor: pointer;
+}
+.ask-btn:disabled { opacity: .5; cursor: default; }
+.ask-mode {
+  font-size: 11px; padding: 4px 10px; border-radius: 999px;
+}
+.ask-mode.live { color: #065f46; background: #d1fae5; border: 1px solid #6ee7b7; }
+.ask-mode.mock { color: #92400e; background: #fef3c7; border: 1px solid #fde68a; }
+.ask-error { font-size: 12px; color: #fca5a5; }
+
 /* Body split: person left, whiteboard right */
 .tutor-body {
   flex: 1;
