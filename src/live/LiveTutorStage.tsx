@@ -70,16 +70,21 @@ export function LiveTutorStage({ refresh = 0, onManage }: Props) {
     };
   }, [refresh]);
 
-  // Show the avatar's face the moment its video track arrives.
+  // Show the avatar's face the moment its video track arrives. Its voice
+  // attaches to the SAME element: one shared MediaStream is what makes the
+  // browser hold lips and audio together — split across elements they drift.
   useEffect(() => {
-    const track = state.videoTrack;
+    const video = state.videoTrack;
+    const audio = state.videoAudioTrack;
     const el = videoRef.current;
-    if (!track || !el) return;
-    track.attach(el);
+    if (!video || !el) return;
+    video.attach(el);
+    audio?.attach(el);
     return () => {
-      track.detach(el);
+      video.detach(el);
+      audio?.detach(el);
     };
-  }, [state.videoTrack]);
+  }, [state.videoTrack, state.videoAudioTrack]);
 
   const active = options.find((t) => t.id === (state.persona ?? selected));
   const name = active?.name ?? state.persona ?? selected;
@@ -90,13 +95,14 @@ export function LiveTutorStage({ refresh = 0, onManage }: Props) {
       <div className="live-stage" data-speaking={state.tutorSpeaking || undefined}>
         <div className="live-face">
           {/* The video element stays mounted so attach() has a target the
-              instant the avatar publishes; the orb covers it until then. */}
+              instant the avatar publishes; the orb covers it until then.
+              NOT muted: the avatar's voice plays through this element too —
+              that's what keeps it in lip sync with the face. */}
           <video
             ref={videoRef}
             className="live-video"
             autoPlay
             playsInline
-            muted /* voice arrives on its own audio track */
             style={{ display: state.videoTrack ? "block" : "none" }}
           />
           {!state.videoTrack && (
