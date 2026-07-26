@@ -10,6 +10,7 @@
  */
 import Anthropic from "@anthropic-ai/sdk";
 import type { TurnResult, VisualSpec } from "../src/spec/visualSpec";
+import { vectorDiagramExample, numberLineExample } from "../src/spec/examples";
 import { SYSTEM_PROMPT, buildUserPrompt } from "./prompt";
 
 export interface TurnRequest {
@@ -79,6 +80,25 @@ export async function callLLM(
 export function mockTurn(req: TurnRequest): { spokenText: string; visualSpec: VisualSpec } {
   const q = req.userQuery.toLowerCase();
   const wantsPlot = /\b(graph|plot|function|derivative|tangent|parabola|curve|x\^?2|sin|cos)\b/.test(q);
+  const wantsVector = /\b(vector|vectors|resultant|magnitude|force|displacement)\b/.test(q);
+  const wantsNumberLine =
+    /(number line|interval|inequality|less than|greater than|\bbetween\b|\[\s*-?\d)/.test(q);
+
+  if (wantsVector) {
+    return {
+      spokenText:
+        "Here are two vectors, tip to tail — then I add them to get the resultant. (offline mock — add an API key for live answers.)",
+      visualSpec: vectorDiagramExample,
+    };
+  }
+
+  if (wantsNumberLine) {
+    return {
+      spokenText:
+        "On the number line, everything greater than negative one and up to three — open at −1, closed at 3. (offline mock — add an API key for live answers.)",
+      visualSpec: numberLineExample,
+    };
+  }
 
   if (wantsPlot) {
     const spec: VisualSpec = {

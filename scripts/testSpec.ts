@@ -8,6 +8,8 @@ import { validateVisualSpec } from "../src/spec/validate";
 import {
   functionPlotExample,
   freeformExample,
+  vectorDiagramExample,
+  numberLineExample,
   brokenExample,
 } from "../src/spec/examples";
 import { compileFn, derivativeAt } from "../src/render/mathfn";
@@ -29,6 +31,27 @@ function check(name: string, cond: boolean, detail?: string) {
 {
   const r = validateVisualSpec(freeformExample);
   check("valid freeform_scene validates", r.ok, r.ok ? "" : r.error);
+}
+
+// 2b. Valid vector_diagram passes.
+{
+  const r = validateVisualSpec(vectorDiagramExample);
+  check("valid vector_diagram validates", r.ok, r.ok ? "" : r.error);
+}
+
+// 2c. Valid number_line passes.
+{
+  const r = validateVisualSpec(numberLineExample);
+  check("valid number_line validates", r.ok, r.ok ? "" : r.error);
+}
+
+// 2d. number_line with max <= min is rejected (refine guard).
+{
+  const r = validateVisualSpec({
+    ...numberLineExample,
+    content: { min: 5, max: 5 },
+  });
+  check("degenerate number_line is rejected", !r.ok);
 }
 
 // 3. Broken spec (missing domain) is rejected -> triggers fallback.
