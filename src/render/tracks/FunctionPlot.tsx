@@ -2,11 +2,11 @@
  * FunctionPlot — Track 1 (deterministic) renderer.
  *
  * Given a `function_plot` spec, renders a Mafs coordinate plane, DRAWS THE
- * CURVE ON (via an animated parametric t-range), then reveals an annotated
- * tangent line that grows out from the tangent point.
+ * CURVE ON (an eased parametric t-range with a marker tip riding the leading
+ * edge), then reveals an annotated tangent line that grows out of the point.
  *
  * The "draw-on" is pure render layer: it reads `progress[stepId]` (0..1) from
- * useDrawSequence and maps it to how much of each element is shown.
+ * useDrawSequence, eases it, and maps it to how much of each element is shown.
  */
 import { useMemo } from "react";
 import { Mafs, Coordinates, Plot, Line, Point, Text } from "mafs";
@@ -18,6 +18,19 @@ import type {
 import type { DrawSequenceState } from "../hooks/useDrawSequence";
 import { compileFn, derivativeAt } from "../mathfn";
 import { EquationFallback } from "./EquationFallback";
+
+// Marker inks (kept in sync with index.css).
+const CURVE = "#2f5fb0";
+const TANGENT = "#c2413b";
+const MARKER = "#e08a3c";
+
+/** Ease-out so the stroke decelerates like a real marker landing. */
+const easeOut = (t: number) => 1 - Math.pow(1 - t, 3);
+/** Slight overshoot so the tangent "snaps" in with life. */
+const easeBack = (t: number) => {
+  const c = 1.6;
+  return 1 + (c + 1) * Math.pow(t - 1, 3) + c * Math.pow(t - 1, 2);
+};
 
 interface Props {
   content: FunctionPlotContent;
@@ -48,8 +61,10 @@ export function FunctionPlot({ content, annotations, drawSequence, state }: Prop
   const tangentStep = stepByElement(drawSequence, "tangent-line");
   const pointStep = stepByElement(drawSequence, "tangent-point");
 
-  const curveP = curveStep ? state.progress[curveStep.id] ?? 0 : 1;
-  const tangentP = tangentStep ? state.progress[tangentStep.id] ?? 0 : 0;
+  const curveRaw = curveStep ? state.progress[curveStep.id] ?? 0 : 1;
+  const tangentRaw = tangentStep ? state.progress[tangentStep.id] ?? 0 : 0;
+  const curveP = easeOut(curveRaw);
+  const tangentP = Math.max(0, easeBack(tangentRaw));
   const pointRevealed = pointStep ? state.isRevealed(pointStep.id) : false;
 
   // Tangent annotation (first one of type "tangent").
@@ -71,6 +86,7 @@ export function FunctionPlot({ content, annotations, drawSequence, state }: Prop
   // Curve draw-on: parametric t-range grows from xMin to xMin+curveP*span.
   const span = xMax - xMin;
   const tEnd = xMin + Math.max(0.0001, curveP) * span;
+  const drawing = curveRaw > 0.02 && curveRaw < 0.999;
 
   // Tangent geometry.
   let tangentSeg: null | {
@@ -82,8 +98,7 @@ export function FunctionPlot({ content, annotations, drawSequence, state }: Prop
   if (tangentX !== null) {
     const py = fn(tangentX);
     const m = derivativeAt(fn, tangentX);
-    // Half-length of the drawn tangent segment, grown by tangentP.
-    const half = (span / 2.2) * Math.max(0.0001, tangentP);
+    const half = (span / 2.2) * Math.max(0.0001, Math.min(1, tangentP));
     const p1: [number, number] = [tangentX - half, py - m * half];
     const p2: [number, number] = [tangentX + half, py + m * half];
     tangentSeg = { p1, p2, px: tangentX, py };
@@ -95,32 +110,41 @@ export function FunctionPlot({ content, annotations, drawSequence, state }: Prop
         viewBox={{ x: [xMin, xMax], y: [range[0], range[1]] }}
         preserveAspectRatio={false}
       >
-        <Coordinates.Cartesian />
+        <Coordinates.Cartesian
+          subdivisions={2}
+          xAxis={{ labels: (n) => (n === 0 ? "" : String(n)) }}
+          yAxis={{ labels: (n) => (n === 0 ? "" : String(n)) }}
+        />
 
         {/* Curve draws on as curveP goes 0 -> 1. */}
         {curveP > 0 && (
           <Plot.Parametric
             xy={(t) => [t, fn(t)]}
             t={[xMin, tEnd]}
-            color="#2563eb"
+            color={CURVE}
+            weight={4}
           />
         )}
 
+        {/* Marker tip riding the leading edge while the curve draws. */}
+        {drawing && <Point x={tEnd} y={fn(tEnd)} color={MARKER} />}
+
         {/* Tangent line grows out of the tangent point. */}
-        {tangentSeg && tangentP > 0 && (
+        {tangentSeg && tangentP > 0.01 && (
           <Line.Segment
             point1={tangentSeg.p1}
             point2={tangentSeg.p2}
-            color="#dc2626"
+            color={TANGENT}
+            weight={3}
           />
         )}
 
         {/* Tangent point + label appear last. */}
         {tangentSeg && pointRevealed && (
           <>
-            <Point x={tangentSeg.px} y={tangentSeg.py} color="#dc2626" />
+            <Point x={tangentSeg.px} y={tangentSeg.py} color={TANGENT} />
             {tangent?.label && (
-              <Text x={tangentSeg.px} y={tangentSeg.py} attach="nw" color="#dc2626">
+              <Text x={tangentSeg.px} y={tangentSeg.py} attach="nw" color={TANGENT} size={18}>
                 {tangent.label}
               </Text>
             )}
