@@ -1,5 +1,6 @@
 # Dependencies for the Vercel Python function api/tutor-api.py.
-# Both apps are local packages; listing the agent first lets pip satisfy
-# tutor-api's `tutor-agent` requirement from the tree instead of PyPI.
-./apps/agent[elevenlabs,db]
-./apps/api
+# Both apps are local packages. Explicit `name @ file:` form: Vercel's
+# installer (uv) otherwise infers the package name from the directory
+# ("agent") and refuses when the metadata says tutor-agent.
+tutor-agent[elevenlabs,db] @ file:./apps/agent
+tutor-api @ file:./apps/api
