@@ -234,7 +234,13 @@ class LemonSliceConfig:
     without needing a publicly fetchable URL — the worker resolves the blob to
     bytes before start()."""
 
-    idle_timeout: int = 30
+    idle_timeout: int = 300
+    """Seconds of no inbound audio before LemonSlice ends the avatar session.
+    A learner thinking, reading, or working the board in silence is normal in a
+    lesson — at the old 30s the face vanished mid-session whenever the tutor
+    had nothing to say for half a minute. 300 matches the room's own
+    empty-timeout; the room reclaim is what should end things, not the vendor."""
+
     api_url: str | None = None
 
 
