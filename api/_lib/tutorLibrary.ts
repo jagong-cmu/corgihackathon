@@ -17,6 +17,7 @@ export interface LiveTutorOption {
   avatarProvider: string;
 }
 
+// Keep in sync with BUILTIN_TUTORS in src/tutorApi.ts (client-side floor).
 const DEFAULT_LIVE_TUTORS: LiveTutorOption[] = [
   // Curated YAML personas the worker always has:
   { id: "ada", name: "Ada", hasVoice: true, avatarProvider: "lemonslice" },
@@ -30,7 +31,7 @@ export function liveTutorLibrary(): LiveTutorOption[] {
   if (raw) {
     try {
       const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed) && parsed.every(isOption)) return parsed;
+      if (Array.isArray(parsed) && parsed.every(isOption)) return parsed.map(toOption);
       console.warn("TUTOR_LIBRARY is not an array of tutor options — using the default list");
     } catch {
       console.warn("TUTOR_LIBRARY is not valid JSON — using the default list");
@@ -39,11 +40,24 @@ export function liveTutorLibrary(): LiveTutorOption[] {
   return DEFAULT_LIVE_TUTORS;
 }
 
-function isOption(x: unknown): x is LiveTutorOption {
+function isOption(x: unknown): x is { id: string; name: string } {
   return (
     typeof x === "object" &&
     x !== null &&
-    typeof (x as LiveTutorOption).id === "string" &&
-    typeof (x as LiveTutorOption).name === "string"
+    typeof (x as { id?: unknown }).id === "string" &&
+    typeof (x as { name?: unknown }).name === "string"
   );
+}
+
+/** Only id + name are required of operator JSON; the rest defaults safely
+ * (hasVoice: false keeps Start disabled instead of ringing a voiceless tutor).
+ * Building a fresh object drops any extra fields, so nothing an operator puts
+ * in the env var reaches anonymous clients verbatim. */
+function toOption(x: { id: string; name: string } & Record<string, unknown>): LiveTutorOption {
+  return {
+    id: x.id,
+    name: x.name,
+    hasVoice: typeof x.hasVoice === "boolean" ? x.hasVoice : false,
+    avatarProvider: typeof x.avatarProvider === "string" ? x.avatarProvider : "none",
+  };
 }

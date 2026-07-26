@@ -6,9 +6,9 @@
  * SAME spot becomes the live session — the avatar's face (or a speaking orb)
  * replaces the still avatar instead of squeezing in beside it.
  *
- * Picking a tutor in the dropdown makes that tutor the active one everywhere
- * (card, greeting, sidebar checkmark) via TutorContext; the roster and the
- * session picker were merged when created tutors got cloned voices.
+ * Tutors are picked in the sidebar ONLY — the card carries no picker of its
+ * own; it renders whoever TutorContext says is active and offers to start a
+ * live session with them.
  *
  * Session state itself lives in LiveTutorProvider (App-level), so this
  * component rendering or not never affects a running session's audio.
@@ -26,8 +26,8 @@ interface Props {
 }
 
 export function LiveTutorStage({ idleSpeech, idleVoiceLabel }: Props) {
-  const { live, options, configured } = useLiveTutorContext();
-  const { tutors, activeTutor, setActiveTutor, openManage } = useTutors();
+  const { live, options, optionsLoaded, configured } = useLiveTutorContext();
+  const { activeTutor } = useTutors();
   const { state, start, end, toggleMic, setNarrationElement, enableAudio } = live;
   const videoRef = useRef<HTMLVideoElement>(null);
 
@@ -55,11 +55,6 @@ export function LiveTutorStage({ idleSpeech, idleVoiceLabel }: Props) {
   const selectedOption = options.find((t) => t.id === personaId);
   const liveOption = options.find((t) => t.id === state.persona);
   const liveName = liveOption?.name ?? state.persona ?? activeTutor.name;
-
-  const pickPersona = (id: string) => {
-    const tutor = tutors.find((t) => t.personaId === id);
-    if (tutor) setActiveTutor(tutor.id);
-  };
 
   // ------------------------------------------------------ connecting / live
   if (state.status !== "idle") {
@@ -168,21 +163,6 @@ export function LiveTutorStage({ idleSpeech, idleVoiceLabel }: Props) {
       </div>
 
       <div className="live-picker">
-        <select
-          className="live-select"
-          value={personaId}
-          onChange={(e) => pickPersona(e.target.value)}
-          aria-label="Choose a tutor"
-        >
-          {!personaId && <option value="">Choose a voice tutor…</option>}
-          {options.map((t) => (
-            <option key={t.id} value={t.id}>
-              {t.name}
-              {t.avatarProvider !== "none" ? " · avatar" : ""}
-              {!t.hasVoice ? " · no voice yet" : ""}
-            </option>
-          ))}
-        </select>
         <button
           type="button"
           className="ask-btn live-start"
@@ -193,10 +173,18 @@ export function LiveTutorStage({ idleSpeech, idleVoiceLabel }: Props) {
         </button>
       </div>
 
+      {/* Only after the roster settled — the default seat is Trudy for a
+          moment while personas load, and this hint would flash falsely. */}
+      {optionsLoaded && !personaId && (
+        <div className="live-hint">
+          {activeTutor.name} is whiteboard-only — pick a voice tutor from the
+          sidebar menu to go live.
+        </div>
+      )}
       {selectedOption?.hasVoice === false && (
         <div className="live-warn">
-          {selectedOption.name} has no voice yet — assign one in the Tutors panel
-          before starting a session.
+          {selectedOption.name} has no voice yet — assign one under “Manage
+          voice tutors” in the sidebar menu before starting a session.
         </div>
       )}
       {configured === false && (
@@ -206,10 +194,6 @@ export function LiveTutorStage({ idleSpeech, idleVoiceLabel }: Props) {
         </div>
       )}
       {state.error && <div className="live-warn">⚠ {state.error}</div>}
-
-      <button type="button" className="live-manage" onClick={openManage}>
-        Create &amp; manage voice tutors
-      </button>
     </>
   );
 }

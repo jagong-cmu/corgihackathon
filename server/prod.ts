@@ -17,11 +17,14 @@ import { readFile, stat } from "node:fs/promises";
 import { extname, join, normalize } from "node:path";
 import { runTurn } from "./turn";
 import { createLiveSession, liveKitConfigured } from "../api/_lib/live";
+import { liveTutorLibrary } from "../api/_lib/tutorLibrary";
 import { llmAvailable } from "./llm";
 import { checkContentBodyAvailable, mergeSyncIngest, mergeConfigured } from "./merge";
 import { ingestDocument, listMaterials, corpusSize, provider, retrieve } from "./rag";
 
 const PORT = Number(process.env.PORT ?? 8080);
+// All interfaces when unset (hosted deploys); the test harness pins 127.0.0.1.
+const HOST = process.env.HOST;
 const DIST = join(process.cwd(), "dist");
 const GROUNDING_MIN_SCORE = 0.05;
 const TOP_K = 4;
@@ -160,6 +163,12 @@ async function handleApi(req: IncomingMessage, res: ServerResponse): Promise<boo
       return true;
     }
 
+    if (url === "/api/live/tutors") {
+      if (method !== "GET") return (json(res, 405, { error: "GET only" }), true);
+      json(res, 200, { tutors: liveTutorLibrary() });
+      return true;
+    }
+
     if (url === "/api/live/health") {
       json(res, 200, { configured: liveKitConfigured() });
       return true;
@@ -194,7 +203,7 @@ const server = createServer(async (req, res) => {
   }
 });
 
-server.listen(PORT, () => {
+server.listen(PORT, HOST, () => {
   // eslint-disable-next-line no-console
   console.log(`Chalk production server listening on :${PORT} (llm=${llmAvailable()})`);
 });

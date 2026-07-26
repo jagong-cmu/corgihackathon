@@ -14,4 +14,6 @@ dist-ssr
 __pycache__/
 *.pyc
 .gstack/
-tsconfig.tsbuildinfo
+
+# TypeScript incremental build state
+*.tsbuildinfo

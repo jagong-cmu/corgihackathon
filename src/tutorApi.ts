@@ -60,7 +60,7 @@ export interface TutorSpec {
   avatar: TutorAvatar;
 }
 
-/** What the session picker needs, whether or not the API is up. */
+/** What the sidebar roster and tutor card need, whether or not the API is up. */
 export interface TutorOption {
   id: string;
   name: string;
@@ -71,8 +71,10 @@ export interface TutorOption {
 }
 
 /**
- * The curated YAML personas the agent worker always has, even with no
- * database. Shown when the persona API is unreachable.
+ * The client's no-backend floor: shown when neither tutor API tier is
+ * reachable. All three ship as worker YAML (nico.yaml is the curated fallback
+ * for the persona-store row), so they can connect even without the database.
+ * Keep in sync with DEFAULT_LIVE_TUTORS in api/_lib/tutorLibrary.ts.
  */
 export const BUILTIN_TUTORS: TutorOption[] = [
   // Nico is the home page's default tutor (TutorContext DEFAULT_PERSONA_ID) —
@@ -80,7 +82,7 @@ export const BUILTIN_TUTORS: TutorOption[] = [
   // default seat empty and the Start button dead.
   { id: "nico", name: "Nico", hasVoice: true, avatarProvider: "lemonslice", photoUrl: null },
   { id: "ada", name: "Ada", hasVoice: true, avatarProvider: "lemonslice", photoUrl: null },
-  { id: "coach-rios", name: "Coach Rios", hasVoice: true, avatarProvider: "simli", photoUrl: null },
+  { id: "coach-rios", name: "Coach Rios", hasVoice: true, avatarProvider: "lemonslice", photoUrl: null },
 ];
 
 const BASE = "/tutor-api";
