@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 
 from livekit import rtc
 
+from ..core.audio import PcmStreamSplitter
 from ..core.channel import Channel, ChannelCapabilities
 from ..core.cue import TimedAction
 from ..core.protocol import protocol_version
@@ -41,6 +42,11 @@ class LiveKitAdapter:
     room: rtc.Room
     audio_source: rtc.AudioSource | None = None
     _caps: ChannelCapabilities = field(default_factory=ChannelCapabilities.realtime)
+    _splitter: PcmStreamSplitter = field(
+        default_factory=lambda: PcmStreamSplitter(
+            sample_rate=SAMPLE_RATE, num_channels=NUM_CHANNELS
+        )
+    )
 
     @property
     def channel(self) -> Channel:
@@ -56,17 +62,47 @@ class LiveKitAdapter:
         `audio` is whatever the TTS provider returned. ElevenLabs gives us mp3
         by default; the worker configures PCM output so this can go straight to
         the source without a decode step in the hot path.
+
+        Reframed through the splitter rather than sent as one frame: a chunk
+        that ends mid-sample would be rejected by `rtc.AudioFrame`, and one
+        oversized frame can't be cut short by `clear_queue` on barge-in.
         """
         if self.audio_source is None:
             log.warning("send_audio called before the audio track was published")
             return
-        frame = rtc.AudioFrame(
-            data=audio,
-            sample_rate=SAMPLE_RATE,
-            num_channels=NUM_CHANNELS,
-            samples_per_channel=len(audio) // (2 * NUM_CHANNELS),
+        for block in self._splitter.feed(audio):
+            await self.audio_source.capture_frame(
+                rtc.AudioFrame(
+                    data=block,
+                    sample_rate=SAMPLE_RATE,
+                    num_channels=NUM_CHANNELS,
+                    samples_per_channel=self._splitter.samples_per_frame,
+                )
+            )
+
+    async def stop_audio(self) -> None:
+        """Barge-in: drop queued frames and the buffered partial frame.
+
+        `clear_queue` only reaches frames the source hasn't played yet, so up to
+        one frame (20ms) of committed audio still gets heard. That is the floor,
+        and it is well below perceptible.
+        """
+        self._splitter.reset()
+        if self.audio_source is not None:
+            self.audio_source.clear_queue()
+
+    async def flush_audio(self) -> None:
+        tail = self._splitter.flush()
+        if tail is None or self.audio_source is None:
+            return
+        await self.audio_source.capture_frame(
+            rtc.AudioFrame(
+                data=tail,
+                sample_rate=SAMPLE_RATE,
+                num_channels=NUM_CHANNELS,
+                samples_per_channel=len(tail) // (2 * NUM_CHANNELS),
+            )
         )
-        await self.audio_source.capture_frame(frame)
 
     async def send_action(self, turn_id: str, action: TimedAction) -> None:
         await self._publish(
