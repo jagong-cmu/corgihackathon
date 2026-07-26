@@ -14,6 +14,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import time
 
 from livekit import agents, rtc
@@ -97,7 +98,7 @@ async def entrypoint(ctx: agents.JobContext) -> None:
     # Which tutor teaches this room is the room's choice, not the process's:
     # the session endpoint (server/live.ts) names a persona in the room
     # metadata. Rooms without metadata keep the old TUTOR_PERSONA behavior.
-    persona_slug, owner = _persona_request(ctx.room.metadata)
+    persona_slug, owner = _persona_request(ctx.room.metadata, ctx.room.name)
     # psycopg is synchronous; one lookup at session start, off the event loop.
     persona = await asyncio.to_thread(_load_persona, persona_slug, owner)
     log.info("session starting with persona %s", persona.id)
@@ -312,23 +313,32 @@ if __name__ == "__main__":
     main()
 
 
-def _persona_request(metadata: str | None) -> tuple[str, str | None]:
+def _persona_request(metadata: str | None, room_name: str = "") -> tuple[str, str | None]:
     """(persona slug, owner) for this room.
 
     The session endpoint (server/live.ts) writes {"persona": ..., "owner": ...}
-    into the room metadata at creation. Rooms created any other way — a
-    livekit-server --dev join, the cue-inspector replay script — carry no
-    metadata and fall back to TUTOR_PERSONA, so every existing workflow keeps
-    working unchanged.
+    into the room metadata at creation and names the room tutor-<persona>-<hex>.
+    Metadata is authoritative (it also carries the owner), but rooms have been
+    seen arriving with it empty — a client re-joining on a still-valid token
+    after the empty room was reclaimed implicitly recreates it bare — and
+    falling straight to TUTOR_PERSONA there hands the learner a different tutor
+    than the one they picked. The room name survives recreation, so it is the
+    second source. Rooms created any other way — a livekit-server --dev join,
+    the cue-inspector replay script — match neither and keep the old
+    TUTOR_PERSONA behavior, so every existing workflow works unchanged.
     """
     if metadata:
         try:
             data = json.loads(metadata)
         except json.JSONDecodeError:
-            log.warning("room metadata is not JSON — using the default persona")
+            log.warning("room metadata is not JSON — trying the room name")
         else:
             if isinstance(data, dict) and data.get("persona"):
                 return str(data["persona"]), data.get("owner") or None
+    named = re.fullmatch(r"tutor-([a-z][a-z0-9_-]{1,47})-[0-9a-f]{8}", room_name or "")
+    if named:
+        log.warning("room %s has no persona metadata — using its name", room_name)
+        return named.group(1), None
     return DEFAULT_PERSONA, None
 
 

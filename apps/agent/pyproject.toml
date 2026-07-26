@@ -15,8 +15,10 @@ dependencies = [
 anthropic = ["anthropic>=0.69"]
 elevenlabs = ["httpx>=0.27"]
 cartesia = ["httpx>=0.27"]
-# Optional so the offline test suite stays dependency-free.
-db = ["psycopg[binary]>=3.2"]
+# Optional so the offline test suite stays dependency-free. psycopg backs the
+# persona store; asyncpg backs retrieval (pgvector) — the worker degrades to
+# no-retrieval without it, which is easy to miss, so they install together.
+db = ["psycopg[binary]>=3.2", "asyncpg>=0.30"]
 livekit = [
     "livekit-agents>=0.12",
     "livekit-plugins-cartesia>=1.6.7",
