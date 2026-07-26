@@ -22,7 +22,6 @@ import argparse
 import json
 import os
 import sys
-from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -40,116 +39,10 @@ sys.path.insert(0, str(AGENT_SRC))
 from tutor_agent.persona.loader import load_persona_dir  # noqa: E402
 from tutor_agent.persona.spec import PersonaSpec  # noqa: E402
 
+# Promoted into apps/agent so there is exactly one definition of the mapping.
+from tutor_agent.persona.store import normalized, row_to_spec, spec_to_row  # noqa: E402
+
 DEFAULT_DSN = "postgres://tutor:tutor@localhost:5432/tutor"
-
-
-# --------------------------------------------------------------------------
-# PersonaSpec <-> row
-# --------------------------------------------------------------------------
-
-
-def _ts_in(value: str | None) -> datetime | None:
-    """Consent timestamps are `str` in the spec and timestamptz in the DB."""
-    if value is None:
-        return None
-    return datetime.fromisoformat(value.replace("Z", "+00:00"))
-
-
-def _ts_out(value: datetime | None) -> str | None:
-    if value is None:
-        return None
-    return value.isoformat()
-
-
-def spec_to_row(spec: PersonaSpec) -> dict[str, Any]:
-    d = spec.model_dump(mode="json")
-    voice = d["voice"]
-    return {
-        "slug": d["id"],
-        "kind": d["kind"],
-        "identity_name": d["identity"]["name"],
-        "identity_relationship": d["identity"]["relationship"],
-        "identity_bio": d["identity"]["bio"],
-        "speech_catchphrases": d["speech"]["catchphrases"],
-        "speech_fillers": d["speech"]["fillers"],
-        "speech_verbosity": d["speech"]["verbosity"],
-        "speech_warmth": d["speech"]["warmth"],
-        "speech_formality": d["speech"]["formality"],
-        "speech_humor": d["speech"]["humor"],
-        "speech_address_as": d["speech"]["address_as"],
-        "pedagogy_style": d["pedagogy"]["style"],
-        "pedagogy_patience": d["pedagogy"]["patience"],
-        "pedagogy_on_wrong_answer": d["pedagogy"]["on_wrong_answer"],
-        "pedagogy_analogy_sources": d["pedagogy"]["analogy_sources"],
-        "pedagogy_encouragement": d["pedagogy"]["encouragement"],
-        "few_shot": Jsonb(d["few_shot"]),
-        "never_does": d["never_does"],
-        "voice_provider": voice["provider"] if voice else None,
-        "voice_id": voice["voice_id"] if voice else None,
-        "voice_model": voice["model"] if voice else None,
-        "voice_stability": voice["stability"] if voice else None,
-        "voice_similarity_boost": voice["similarity_boost"] if voice else None,
-        "avatar_provider": d["avatar"]["provider"],
-        "avatar_ref": d["avatar"]["avatar_ref"],
-        "consent_status": d["consent"]["status"],
-        "consent_recording_uri": d["consent"]["recording_uri"],
-        "consent_granted_at": _ts_in(d["consent"]["granted_at"]),
-        "consent_revoked_at": _ts_in(d["consent"]["revoked_at"]),
-        "consent_captured_in_session": d["consent"]["captured_in_session"],
-    }
-
-
-def row_to_spec(row: dict[str, Any]) -> PersonaSpec:
-    voice = None
-    if row["voice_id"] is not None:
-        voice = {
-            "provider": row["voice_provider"],
-            "voice_id": row["voice_id"],
-            "model": row["voice_model"],
-            "stability": float(row["voice_stability"]),
-            "similarity_boost": float(row["voice_similarity_boost"]),
-        }
-    return PersonaSpec.model_validate(
-        {
-            "id": row["slug"],
-            "kind": row["kind"],
-            "identity": {
-                "name": row["identity_name"],
-                "relationship": row["identity_relationship"],
-                "bio": row["identity_bio"],
-            },
-            "speech": {
-                "catchphrases": row["speech_catchphrases"],
-                "fillers": row["speech_fillers"],
-                "verbosity": row["speech_verbosity"],
-                "warmth": row["speech_warmth"],
-                "formality": row["speech_formality"],
-                "humor": row["speech_humor"],
-                "address_as": row["speech_address_as"],
-            },
-            "pedagogy": {
-                "style": row["pedagogy_style"],
-                "patience": row["pedagogy_patience"],
-                "on_wrong_answer": row["pedagogy_on_wrong_answer"],
-                "analogy_sources": row["pedagogy_analogy_sources"],
-                "encouragement": row["pedagogy_encouragement"],
-            },
-            "few_shot": row["few_shot"],
-            "never_does": row["never_does"],
-            "voice": voice,
-            "avatar": {
-                "provider": row["avatar_provider"],
-                "avatar_ref": row["avatar_ref"],
-            },
-            "consent": {
-                "status": row["consent_status"],
-                "recording_uri": row["consent_recording_uri"],
-                "granted_at": _ts_out(row["consent_granted_at"]),
-                "revoked_at": _ts_out(row["consent_revoked_at"]),
-                "captured_in_session": row["consent_captured_in_session"],
-            },
-        }
-    )
 
 
 def upsert_persona(conn: psycopg.Connection, spec: PersonaSpec) -> None:
@@ -160,33 +53,23 @@ def upsert_persona(conn: psycopg.Connection, spec: PersonaSpec) -> None:
     updates = ", ".join(f"{c} = EXCLUDED.{c}" for c in cols if c != "slug")
     conn.execute(
         f"INSERT INTO personas ({', '.join(cols)}) VALUES ({placeholders}) "
-        f"ON CONFLICT (slug) WHERE owner_user_id IS NULL DO UPDATE SET {updates}",
+        f"ON CONFLICT (slug) WHERE owner_user_id IS NULL AND deleted_at IS NULL "
+        f"DO UPDATE SET {updates}",
         row,
     )
 
 
 def fetch_persona(conn: psycopg.Connection, slug: str) -> dict[str, Any]:
     with conn.cursor(row_factory=dict_row) as cur:
-        cur.execute("SELECT * FROM personas WHERE slug = %s AND owner_user_id IS NULL", (slug,))
+        cur.execute(
+            "SELECT * FROM personas "
+            "WHERE slug = %s AND owner_user_id IS NULL AND deleted_at IS NULL",
+            (slug,),
+        )
         found = cur.fetchone()
     if found is None:
         raise AssertionError(f"persona {slug!r} vanished after insert")
     return found
-
-
-def normalized(spec: PersonaSpec) -> dict[str, Any]:
-    """Compare on the JSON projection, with consent timestamps normalized.
-
-    The spec types granted_at/revoked_at as free strings; the DB types them as
-    timestamptz (the schema takes 'timestamps are timestamptz, always' literally).
-    So '...Z' comes back as '...+00:00' — the same instant, spelled canonically.
-    Nothing else is touched.
-    """
-    d = spec.model_dump(mode="json")
-    for key in ("granted_at", "revoked_at"):
-        raw = d["consent"][key]
-        d["consent"][key] = _ts_out(_ts_in(raw))
-    return d
 
 
 # --------------------------------------------------------------------------
@@ -279,12 +162,26 @@ def run_probes(conn: psycopg.Connection) -> bool:
             owner_user_id=owner_id,
             expect_rejected=True,
         ),
+        # Changed in migration 0011. This used to expect rejection, which made
+        # the revoked state unrepresentable for exactly the personas revocation
+        # exists for — §9 makes a persona revocable at any time, and §10 needs a
+        # sweep that FINDS revoked personas to delete their voice and avatar
+        # vendor-side. A row that cannot exist cannot be swept.
+        #
+        # The guarantee that matters is unchanged and still probed above: you
+        # cannot CREATE a real-person persona without granted, in-session
+        # consent. Refusing to SERVE a revoked one is the application's job
+        # (persona.loader.get_persona), not a CHECK constraint's.
         probe(
             conn,
-            "granted then revoked",
-            {**granted, "consent_revoked_at": "2026-07-02T00:00:00+00:00"},
+            "granted then revoked -> stays representable for the §10 sweep",
+            {
+                **granted,
+                "consent_status": "revoked",
+                "consent_revoked_at": "2026-07-02T00:00:00+00:00",
+            },
             owner_user_id=owner_id,
-            expect_rejected=True,
+            expect_rejected=False,
         ),
         probe(
             conn,

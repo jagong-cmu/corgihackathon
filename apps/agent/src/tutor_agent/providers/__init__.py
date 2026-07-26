@@ -14,6 +14,7 @@ from .base import (
     TTSProvider,
     TurnEnd,
 )
+from .factory import VoiceProviderError, make_tts
 from .fakes import (
     FakeAvatar,
     FakeLLM,
@@ -46,4 +47,6 @@ __all__ = [
     "ToolCall",
     "Transcript",
     "TurnEnd",
+    "VoiceProviderError",
+    "make_tts",
 ]

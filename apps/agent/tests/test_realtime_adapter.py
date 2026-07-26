@@ -89,57 +89,99 @@ def test_satisfies_the_channel_adapter_protocol():
     assert isinstance(adapter, ChannelAdapter)
 
 
-class TestSimliAvatar:
-    """The avatar satisfies our own protocol — no AgentSession involved."""
+class TestAvatarProviders:
+    """Both vendors run through the same shared plumbing."""
 
-    def _avatar(self):
-        from tutor_agent.providers.simli_avatar import SimliAvatar, SimliConfig
+    def _creds(self):
+        from tutor_agent.providers.livekit_avatar import AvatarCredentials
 
         room = MagicMock()
         room.name = "test-room"
-        return SimliAvatar(
-            config=SimliConfig(api_key="k", face_id="f"),
+        return AvatarCredentials(
             room=room,
             local_identity="agent",
             livekit_url="wss://x",
-            livekit_api_key="key",
-            livekit_api_secret="secret",
+            livekit_api_key="devkey",
+            livekit_api_secret="devsecret0123456789012345678901234567890",
         )
 
-    def test_satisfies_the_avatar_provider_protocol(self):
+    def _lemonslice(self):
+        from tutor_agent.providers.livekit_avatar import LemonSliceAvatar, LemonSliceConfig
+
+        return LemonSliceAvatar(
+            config=LemonSliceConfig(api_key="k", agent_id="a"), credentials=self._creds()
+        )
+
+    def _simli(self):
+        from tutor_agent.providers.livekit_avatar import SimliAvatar, SimliConfig
+
+        return SimliAvatar(config=SimliConfig(api_key="k", face_id="f"), credentials=self._creds())
+
+    def test_both_satisfy_the_avatar_provider_protocol(self):
         from tutor_agent.core.session import AvatarProvider
 
-        assert isinstance(self._avatar(), AvatarProvider)
+        assert isinstance(self._lemonslice(), AvatarProvider)
+        assert isinstance(self._simli(), AvatarProvider)
 
     def test_inactive_until_started(self):
         """A failed start must degrade to voice-only, not to silence."""
-        assert self._avatar().is_active is False
+        assert self._lemonslice().is_active is False
+        assert self._simli().is_active is False
+
+    def test_identities_are_distinct(self):
+        """They're used to exclude the avatar's own audio from STT."""
+        assert self._lemonslice().identity != self._simli().identity
+
+    def test_known_identities_covers_every_provider(self):
+        from tutor_agent.providers.livekit_avatar import (
+            AVATAR_IDENTITIES,
+            known_avatar_identities,
+        )
+
+        assert set(AVATAR_IDENTITIES.values()) == set(known_avatar_identities())
+        assert "lemonslice" in AVATAR_IDENTITIES
 
     async def test_push_audio_before_start_is_a_noop(self):
-        avatar = self._avatar()
-        await avatar.push_audio(b"\x00\x01")  # must not raise
+        await self._lemonslice().push_audio(b"\x00\x01")  # must not raise
 
     async def test_pause_clears_the_buffer(self):
         """Barge-in: stop lip-syncing a sentence the learner interrupted."""
-        avatar = self._avatar()
+        avatar = self._lemonslice()
         output = MagicMock()
         avatar._output = output
         await avatar.pause()
         output.clear_buffer.assert_called_once()
 
-    async def test_stop_flushes_and_deactivates(self):
-        avatar = self._avatar()
+    async def test_stop_deactivates(self):
+        avatar = self._lemonslice()
         avatar._output = MagicMock()
         avatar._active = True
         await avatar.stop()
         assert avatar.is_active is False
 
-    def test_config_payload_pairs_face_and_emotion(self):
-        from tutor_agent.providers.simli_avatar import DEFAULT_EMOTION_ID, SimliConfig
+    async def test_handshake_failure_degrades_instead_of_raising(self):
+        avatar = self._lemonslice()
+
+        async def boom(**kwargs):
+            raise RuntimeError("vendor down")
+
+        avatar._open_session = boom
+        await avatar.start(avatar_ref="a")
+        assert avatar.is_active is False
+
+    def test_simli_payload_pairs_face_and_emotion(self):
+        from tutor_agent.providers.livekit_avatar import SIMLI_DEFAULT_EMOTION_ID, SimliConfig
 
         payload = SimliConfig(api_key="k", face_id="myface").to_payload()
-        assert payload["faceId"] == f"myface/{DEFAULT_EMOTION_ID}"
-        assert payload["handleSilence"] is True
+        assert payload["faceId"] == f"myface/{SIMLI_DEFAULT_EMOTION_ID}"
+
+    def test_avatar_rate_is_16k_not_the_publish_rate(self):
+        """Sending 48kHz audio to a 16kHz avatar makes the tutor sound like helium."""
+        from tutor_agent.adapters.realtime import SAMPLE_RATE
+        from tutor_agent.providers.livekit_avatar import AVATAR_SAMPLE_RATE
+
+        assert AVATAR_SAMPLE_RATE == 16_000
+        assert AVATAR_SAMPLE_RATE != SAMPLE_RATE
 
 
 class TestWorkerConfig:

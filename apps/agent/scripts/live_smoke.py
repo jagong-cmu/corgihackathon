@@ -17,7 +17,7 @@ from pathlib import Path
 from tutor_agent.core import RecordingAdapter, SessionConfig, TutorSession
 from tutor_agent.persona import get_persona
 from tutor_agent.providers.anthropic_llm import AnthropicLLM
-from tutor_agent.providers.elevenlabs import ElevenLabsTTS
+from tutor_agent.providers.factory import make_tts
 
 QUESTION = "I keep messing up factoring. Can you walk me through x squared minus four x plus three?"
 
@@ -30,7 +30,7 @@ class TimingTTS:
     path, which is exactly the thing being measured.
     """
 
-    def __init__(self, inner: ElevenLabsTTS) -> None:
+    def __init__(self, inner) -> None:
         self.inner = inner
         self.first_audio_ms: float | None = None
         self.audio = bytearray()
@@ -65,7 +65,23 @@ async def main() -> int:
     persona = get_persona(persona_id)
     assert persona.voice is not None
 
-    tts = TimingTTS(ElevenLabsTTS(api_key=os.environ["ELEVENLABS_API_KEY"]))
+    # TUTOR_VOICE_PROVIDER overrides the persona, so the same persona can be
+    # A/B'd across vendors without editing YAML.
+    override = os.environ.get("TUTOR_VOICE_PROVIDER")
+    if override and persona.voice is not None:
+        voice = persona.voice.model_copy(update={"provider": override})
+        if override == "cartesia":
+            voice = voice.model_copy(
+                update={
+                    "voice_id": os.environ.get(
+                        "CARTESIA_VOICE_ID", "db6b0ed5-d5d3-463d-ae85-518a07d3c2b4"
+                    ),
+                    "model": os.environ.get("CARTESIA_MODEL", "sonic-turbo"),
+                }
+            )
+        persona = persona.model_copy(update={"voice": voice})
+
+    tts = TimingTTS(make_tts(persona, sample_rate=48_000))
     adapter = RecordingAdapter()
     session = TutorSession(
         persona=persona,
@@ -76,6 +92,7 @@ async def main() -> int:
     )
 
     print(f"persona: {persona.identity.name} ({persona.id})")
+    print(f"voice:   {persona.voice.provider} / {persona.voice.model}")
     print(f"student: {QUESTION}\n")
 
     t0 = time.perf_counter()

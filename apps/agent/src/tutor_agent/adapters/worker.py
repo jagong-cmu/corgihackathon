@@ -22,12 +22,16 @@ from livekit.plugins import elevenlabs as lk_elevenlabs
 from ..core.session import SessionConfig, TutorSession
 from ..persona import get_persona
 from ..providers.anthropic_llm import AnthropicLLM
-from ..providers.elevenlabs import ElevenLabsTTS
-from ..providers.simli_avatar import (
-    AVATAR_IDENTITY,
-    SIMLI_SAMPLE_RATE,
+from ..providers.factory import make_tts
+from ..providers.livekit_avatar import (
+    AVATAR_SAMPLE_RATE,
+    AvatarCredentials,
+    LemonSliceAvatar,
+    LemonSliceConfig,
+    LiveKitAvatar,
     SimliAvatar,
     SimliConfig,
+    known_avatar_identities,
 )
 from .realtime import CANVAS_TOPIC, NUM_CHANNELS, SAMPLE_RATE, LiveKitAdapter
 
@@ -70,11 +74,9 @@ async def entrypoint(ctx: agents.JobContext) -> None:
     session = TutorSession(
         persona=persona,
         llm=AnthropicLLM(model="claude-sonnet-5", effort="low"),
-        tts=ElevenLabsTTS(
-            api_key=os.environ["ELEVENLABS_API_KEY"],
-            # PCM at LiveKit's native rate — mp3 into an AudioSource is noise.
-            output_format=f"pcm_{SAMPLE_RATE}",
-        ),
+        # The persona's voice.provider picks the vendor. PCM at LiveKit's
+        # native rate — mp3 into an AudioSource is noise.
+        tts=make_tts(persona, sample_rate=SAMPLE_RATE),
         channel=adapter,
         config=SessionConfig(),
     )
@@ -92,11 +94,13 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         # the avatar only, and re-request TTS at Simli's ingest rate.
         adapter.audio_source = None
         session.avatar = avatar
-        session.tts = ElevenLabsTTS(
-            api_key=os.environ["ELEVENLABS_API_KEY"],
-            output_format=f"pcm_{SIMLI_SAMPLE_RATE}",
+        # Avatars ingest at 16k, so re-build the provider at that rate.
+        session.tts = make_tts(persona, sample_rate=AVATAR_SAMPLE_RATE)
+        log.info(
+            "avatar active (%s) — audio routed through it at %dHz",
+            persona.avatar.provider,
+            AVATAR_SAMPLE_RATE,
         )
-        log.info("avatar active — audio routed through Simli at %dHz", SIMLI_SAMPLE_RATE)
 
     turn_lock = asyncio.Lock()
     speech_ended_at: float | None = None
@@ -148,7 +152,7 @@ async def entrypoint(ctx: agents.JobContext) -> None:
     ) -> None:
         if track.kind != rtc.TrackKind.KIND_AUDIO:
             return
-        if participant.identity == AVATAR_IDENTITY:
+        if participant.identity in known_avatar_identities():
             # The avatar publishes audio on our behalf; transcribing it would
             # make the tutor answer itself.
             return
@@ -206,32 +210,44 @@ if __name__ == "__main__":
     main()
 
 
-async def _maybe_start_avatar(ctx: agents.JobContext, persona) -> SimliAvatar | None:
-    """Start the avatar if the persona wants one and credentials are present.
+async def _maybe_start_avatar(ctx: agents.JobContext, persona) -> LiveKitAvatar | None:
+    """Start the avatar the persona asks for, if credentials are present.
 
-    Returns None rather than raising: a missing key or a Simli outage should
+    Returns None rather than raising: a missing key or a vendor outage should
     degrade the session to voice-only, not end it.
     """
-    if persona.avatar.provider != "simli":
+    provider = persona.avatar.provider
+    if provider in (None, "", "none"):
         return None
 
-    api_key = os.environ.get("SIMLI_API_KEY")
-    face_id = persona.avatar.avatar_ref or os.environ.get("SIMLI_FACE_ID")
-    if not api_key or not face_id:
-        log.info("avatar disabled — set SIMLI_API_KEY and SIMLI_FACE_ID to enable")
-        return None
-
-    avatar = SimliAvatar(
-        config=SimliConfig(api_key=api_key, face_id=face_id),
+    credentials = AvatarCredentials(
         room=ctx.room,
         local_identity=ctx.local_participant_identity,
         livekit_url=os.environ["LIVEKIT_URL"],
         livekit_api_key=os.environ["LIVEKIT_API_KEY"],
         livekit_api_secret=os.environ["LIVEKIT_API_SECRET"],
     )
-    try:
-        await avatar.start(avatar_ref=face_id)
-    except Exception:
-        log.exception("avatar failed to start — continuing voice-only")
+
+    avatar: LiveKitAvatar
+    if provider == "lemonslice":
+        api_key = os.environ.get("LEMONSLICE_API_KEY")
+        if not api_key:
+            log.info("avatar disabled — set LEMONSLICE_API_KEY to enable")
+            return None
+        ref = persona.avatar.avatar_ref or os.environ.get("LEMONSLICE_AVATAR_REF", "")
+        avatar = LemonSliceAvatar(config=LemonSliceConfig(api_key=api_key), credentials=credentials)
+    elif provider == "simli":
+        api_key = os.environ.get("SIMLI_API_KEY")
+        ref = persona.avatar.avatar_ref or os.environ.get("SIMLI_FACE_ID", "")
+        if not api_key or not ref:
+            log.info("avatar disabled — set SIMLI_API_KEY and SIMLI_FACE_ID to enable")
+            return None
+        avatar = SimliAvatar(
+            config=SimliConfig(api_key=api_key, face_id=ref), credentials=credentials
+        )
+    else:
+        log.warning("persona %s asks for unknown avatar provider %r", persona.id, provider)
         return None
-    return avatar
+
+    await avatar.start(avatar_ref=ref)
+    return avatar if avatar.is_active else None

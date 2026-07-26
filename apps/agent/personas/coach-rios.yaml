@@ -64,5 +64,5 @@ voice:
   similarity_boost: 0.75
 
 avatar:
-  provider: simli
+  provider: lemonslice
   avatar_ref: null

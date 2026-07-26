@@ -214,8 +214,18 @@ class PersonaSpec(BaseModel):
         """§9/§10: likeness consent is mandatory and non-negotiable.
 
         Enforced in the type system rather than at the UI layer, so no code path
-        can construct a usable real-person persona without a granted consent
-        record whose media was captured in-session.
+        can construct a real-person persona without a granted consent record
+        whose media was captured in-session.
+
+        Note what is deliberately NOT checked here: revocation. A revoked
+        persona must remain *representable*, because §9 makes personas revocable
+        at any time and §10 requires a sweep that finds revoked personas to
+        delete their voices and avatars vendor-side. A validator that refused to
+        construct them would make the revoked state unreachable for exactly the
+        personas revocation exists for.
+
+        Representable is not the same as usable: `get_persona()` refuses to
+        serve a revoked persona, which is the correct layer for that check.
         """
         if self.kind is PersonaKind.REAL_PERSON:
             if self.consent.status != "granted":
@@ -228,12 +238,13 @@ class PersonaSpec(BaseModel):
                     f"persona '{self.id}': real-person voice and photo must be captured inside "
                     "the consent session; uploaded third-party media is rejected by design."
                 )
-            if self.consent.revoked_at is not None:
-                raise ValueError(
-                    f"persona '{self.id}': consent was revoked at {self.consent.revoked_at}"
-                )
         return self
 
     @property
     def is_revoked(self) -> bool:
+        """True once the person cloned has withdrawn consent.
+
+        Such a persona still loads (so deletion sweeps can find it) but
+        `get_persona()` will not serve it into a session.
+        """
         return self.consent.revoked_at is not None

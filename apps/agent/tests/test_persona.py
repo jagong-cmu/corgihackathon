@@ -58,18 +58,45 @@ class TestConsentEnforcement:
         )
         assert persona.kind is PersonaKind.REAL_PERSON
 
-    def test_revoked_consent_is_rejected(self):
-        with pytest.raises(ValidationError, match="consent was revoked"):
-            PersonaSpec.model_validate(
-                _minimal(
-                    kind="real_person",
-                    consent={
-                        "status": "granted",
-                        "captured_in_session": True,
-                        "revoked_at": "2026-07-01T00:00:00Z",
-                    },
-                )
+    def test_revoked_persona_stays_representable(self):
+        """§9/§10. A revoked persona must still LOAD, or the vendor-side
+        deletion sweep can never find it — the revoked state would be
+        unreachable for exactly the personas revocation exists for.
+
+        Representable is not usable; get_persona() is what refuses to serve it.
+        """
+        persona = PersonaSpec.model_validate(
+            _minimal(
+                kind="real_person",
+                consent={
+                    "status": "granted",
+                    "captured_in_session": True,
+                    "granted_at": "2026-06-01T00:00:00Z",
+                    "revoked_at": "2026-07-01T00:00:00Z",
+                },
             )
+        )
+        assert persona.is_revoked
+
+    def test_revoked_persona_is_not_served(self, tmp_path):
+        """The enforcement that actually matters, at the layer that matters."""
+        import yaml
+
+        from tutor_agent.persona import PersonaNotFoundError, get_persona
+
+        spec = _minimal(
+            id="revoked-one",
+            kind="real_person",
+            consent={
+                "status": "granted",
+                "captured_in_session": True,
+                "revoked_at": "2026-07-01T00:00:00Z",
+            },
+        )
+        (tmp_path / "revoked-one.yaml").write_text(yaml.safe_dump(spec))
+
+        with pytest.raises(PersonaNotFoundError, match="revoked"):
+            get_persona("revoked-one", tmp_path)
 
     def test_self_clone_needs_no_consent_record(self):
         persona = PersonaSpec.model_validate(_minimal(kind="self"))
