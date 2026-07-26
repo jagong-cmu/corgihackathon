@@ -162,7 +162,7 @@ def run_probes(conn: psycopg.Connection) -> bool:
             owner_user_id=owner_id,
             expect_rejected=True,
         ),
-        # Changed in migration 0011. This used to expect rejection, which made
+        # Changed in migration 0013. This used to expect rejection, which made
         # the revoked state unrepresentable for exactly the personas revocation
         # exists for — §9 makes a persona revocable at any time, and §10 needs a
         # sweep that FINDS revoked personas to delete their voice and avatar

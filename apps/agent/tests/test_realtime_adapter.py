@@ -75,11 +75,92 @@ class TestCapabilities:
 
 
 class TestAudio:
+    """These build genuine rtc.AudioFrames.
+
+    A MagicMock audio source would accept anything, including the malformed
+    frames that crash a real session — so the source is mocked but the frame
+    construction is not.
+    """
+
+    def _with_source(self):
+        adapter, room = _adapter()
+        source = MagicMock()
+        source.capture_frame = AsyncMock()
+        adapter.audio_source = source
+        return adapter, source
+
+    def _frames(self, source: MagicMock) -> list:
+        return [c.args[0] for c in source.capture_frame.call_args_list]
+
     async def test_audio_before_track_publish_warns_rather_than_crashes(self, caplog):
         adapter, _ = _adapter()
         adapter.audio_source = None
         await adapter.send_audio(b"\x00\x01")
         assert "before the audio track" in caplog.text
+
+    async def test_odd_length_chunk_does_not_raise(self):
+        """The live crash. ElevenLabs chunks on network, not sample, boundaries.
+
+        Before the splitter this raised ValueError inside send_audio, which
+        unwound through the turn and killed the reply.
+        """
+        adapter, source = self._with_source()
+        await adapter.send_audio(b"\x00" * 4097)
+        assert self._frames(source), "expected at least one frame"
+
+    async def test_every_frame_declares_its_true_length(self):
+        # frame.data is a memoryview of int16, so its length is in samples.
+        adapter, source = self._with_source()
+        await adapter.send_audio(b"\x00" * 5000)
+        for frame in self._frames(source):
+            assert len(frame.data) == frame.samples_per_channel
+
+    async def test_a_long_segment_is_split_for_barge_in_granularity(self):
+        """One giant frame can't be cut short by clear_queue."""
+        adapter, source = self._with_source()
+        await adapter.send_audio(b"\x00" * (48_000 * 2))  # one second
+        frames = self._frames(source)
+        assert len(frames) == 50  # 20ms each
+        assert all(f.duration <= 0.02 for f in frames)
+
+    async def test_a_sample_split_across_chunks_survives(self):
+        adapter, source = self._with_source()
+        await adapter.send_audio(b"\x11" * 1919)
+        await adapter.send_audio(b"\x22" + b"\x33" * 1920)
+        joined = b"".join(bytes(f.data) for f in self._frames(source))
+        assert joined[:1919] == b"\x11" * 1919
+        assert joined[1919:1920] == b"\x22"
+
+    async def test_flush_emits_the_tail(self):
+        adapter, source = self._with_source()
+        await adapter.send_audio(b"\x00" * 100)  # under one frame
+        assert self._frames(source) == []
+        await adapter.flush_audio()
+        assert len(self._frames(source)) == 1
+
+    async def test_flush_with_nothing_buffered_is_a_noop(self):
+        adapter, source = self._with_source()
+        await adapter.flush_audio()
+        assert self._frames(source) == []
+
+    async def test_stop_audio_clears_the_playout_queue(self):
+        adapter, source = self._with_source()
+        await adapter.send_audio(b"\x00" * 5000)
+        await adapter.stop_audio()
+        source.clear_queue.assert_called_once()
+
+    async def test_stop_audio_drops_the_buffered_fragment(self):
+        """Otherwise the tail of an interrupted sentence leads the next one."""
+        adapter, source = self._with_source()
+        await adapter.send_audio(b"\x42" * 500)
+        await adapter.stop_audio()
+        await adapter.flush_audio()
+        assert self._frames(source) == []
+
+    async def test_stop_audio_before_the_track_exists_is_safe(self):
+        adapter, _ = _adapter()
+        adapter.audio_source = None
+        await adapter.stop_audio()  # must not raise
 
 
 def test_satisfies_the_channel_adapter_protocol():
@@ -182,6 +263,39 @@ class TestAvatarProviders:
 
         assert AVATAR_SAMPLE_RATE == 16_000
         assert AVATAR_SAMPLE_RATE != SAMPLE_RATE
+
+
+class TestMetricsSink:
+    def test_disabled_without_a_path(self, tmp_path):
+        from tutor_agent.adapters.worker import TurnMetricsSink
+
+        sink = TurnMetricsSink(None)
+        sink.record({"turnId": "t_0001"})  # must not raise
+        assert list(tmp_path.iterdir()) == []
+
+    def test_appends_one_json_object_per_turn(self, tmp_path):
+        import json as _json
+
+        from tutor_agent.adapters.worker import TurnMetricsSink
+
+        path = tmp_path / "metrics.jsonl"
+        sink = TurnMetricsSink(str(path))
+        sink.record({"turnId": "t_0001", "firstAudioMs": 940.0})
+        sink.record({"turnId": "t_0002", "firstAudioMs": 1310.5})
+
+        rows = [_json.loads(line) for line in path.read_text().splitlines()]
+        assert [r["turnId"] for r in rows] == ["t_0001", "t_0002"]
+
+    def test_an_unwritable_sink_never_kills_the_session(self, caplog):
+        from tutor_agent.adapters.worker import TurnMetricsSink
+
+        sink = TurnMetricsSink("/nonexistent-dir/metrics.jsonl")
+        sink.record({"turnId": "t_0001"})
+        sink.record({"turnId": "t_0002"})
+
+        assert "metrics sink disabled" in caplog.text
+        # Warned once, not once per turn.
+        assert caplog.text.count("metrics sink disabled") == 1
 
 
 class TestWorkerConfig:

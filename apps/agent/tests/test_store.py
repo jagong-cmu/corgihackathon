@@ -107,11 +107,11 @@ class TestPostgresStoreShape:
     def test_satisfies_the_protocol(self):
         assert isinstance(PostgresPersonaStore(conn=None), PersonaStore)
 
-    def test_conflict_targets_match_the_0011_indexes(self):
-        """Migration 0011 added `deleted_at IS NULL` to both partial unique
+    def test_conflict_targets_match_the_0013_indexes(self):
+        """Migration 0013 added `deleted_at IS NULL` to both partial unique
         indexes. A conflict target that omits it matches no index and fails at
         runtime with InvalidColumnReference — which is exactly what broke the
-        seed script when 0011 landed."""
+        seed script when 0013 landed."""
         for target in (
             PostgresPersonaStore._OWNED_CONFLICT,
             PostgresPersonaStore._LIBRARY_CONFLICT,

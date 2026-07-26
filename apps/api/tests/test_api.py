@@ -172,7 +172,7 @@ class TestConsentEnforcement:
         assert r.status_code == 201, r.text
 
     def test_revocation_hides_the_persona_but_keeps_the_row(self, client, conn, owner):
-        """The bug fixed in 0011: a revoked persona must survive so the §10
+        """The bug fixed in 0013: a revoked persona must survive so the §10
         vendor-deletion sweep can find it."""
         slug = f"t{uuid.uuid4().hex[:8]}"
         client.post("/personas", json=_spec(slug), headers={"X-User-Id": owner})

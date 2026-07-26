@@ -46,6 +46,8 @@ from livekit import api, rtc
 from livekit.agents.voice.avatar import DataStreamAudioOutput
 from livekit.agents.voice.room_io import ATTRIBUTE_PUBLISH_ON_BEHALF
 
+from ..core.audio import PcmStreamSplitter
+
 log = logging.getLogger(__name__)
 
 # Every avatar vendor we've looked at ingests 16kHz mono. Our TTS must be asked
@@ -75,6 +77,9 @@ class LiveKitAvatar(ABC):
         self.credentials = credentials
         self._output: DataStreamAudioOutput | None = None
         self._active = False
+        # Same reframing the publish path needs, at the avatar's ingest rate.
+        # A chunk ending mid-sample would be rejected by rtc.AudioFrame.
+        self._splitter = PcmStreamSplitter(sample_rate=AVATAR_SAMPLE_RATE, num_channels=1)
 
     @property
     def is_active(self) -> bool:
@@ -129,22 +134,33 @@ class LiveKitAvatar(ABC):
     async def push_audio(self, audio: bytes) -> None:
         if self._output is None or not audio:
             return
-        await self._output.capture_frame(
-            rtc.AudioFrame(
-                data=audio,
-                sample_rate=AVATAR_SAMPLE_RATE,
-                num_channels=1,
-                samples_per_channel=len(audio) // 2,  # 16-bit mono
+        for block in self._splitter.feed(audio):
+            await self._output.capture_frame(
+                rtc.AudioFrame(
+                    data=block,
+                    sample_rate=AVATAR_SAMPLE_RATE,
+                    num_channels=1,
+                    samples_per_channel=self._splitter.samples_per_frame,
+                )
             )
-        )
+
+    async def interrupt(self) -> None:
+        """Barge-in: drop queued audio so the face stops mid-sentence."""
+        self._splitter.reset()
+        if self._output is not None:
+            self._output.clear_buffer()
 
     async def pause(self) -> None:
-        """Drop queued audio.
+        """Stand down while the learner works solo on the board.
 
-        Doubles as barge-in — without it the avatar keeps lip-syncing a sentence
-        the learner already interrupted. Also the cost lever: avatar providers
-        bill per active minute.
+        Clears the buffer, which is all we can do without a resume path.
+        Deliberately does NOT end the vendor session, so on a provider that
+        meters connection time rather than active speech this does not stop the
+        meter. Closing that gap means `stop()` here and `start()` again on the
+        next turn, at the cost of a handshake mid-lesson — worth measuring
+        against a real invoice before choosing (§14).
         """
+        self._splitter.reset()
         if self._output is not None:
             self._output.clear_buffer()
 
@@ -153,6 +169,7 @@ class LiveKitAvatar(ABC):
             self._output.flush()
         self._output = None
         self._active = False
+        self._splitter.reset()
 
 
 # ---------------------------------------------------------------------------

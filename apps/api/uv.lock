@@ -716,9 +716,11 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "anthropic", marker = "extra == 'anthropic'", specifier = ">=0.69" },
+    { name = "httpx", marker = "extra == 'cartesia'", specifier = ">=0.27" },
     { name = "httpx", marker = "extra == 'elevenlabs'", specifier = ">=0.27" },
     { name = "jsonschema", specifier = ">=4.23" },
     { name = "livekit-agents", marker = "extra == 'livekit'", specifier = ">=0.12" },
+    { name = "livekit-plugins-cartesia", marker = "extra == 'livekit'", specifier = ">=1.6.7" },
     { name = "livekit-plugins-elevenlabs", marker = "extra == 'livekit'", specifier = ">=0.7" },
     { name = "livekit-plugins-lemonslice", marker = "extra == 'livekit'", specifier = ">=1.6.7" },
     { name = "livekit-plugins-simli", marker = "extra == 'livekit'", specifier = ">=1.6.7" },
@@ -726,7 +728,7 @@ requires-dist = [
     { name = "pydantic", specifier = ">=2.9" },
     { name = "pyyaml", specifier = ">=6.0" },
 ]
-provides-extras = ["anthropic", "elevenlabs", "db", "livekit"]
+provides-extras = ["anthropic", "elevenlabs", "cartesia", "db", "livekit"]
 
 [package.metadata.requires-dev]
 dev = [

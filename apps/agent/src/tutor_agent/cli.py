@@ -4,6 +4,12 @@ tutor personas                 list what's available
 tutor show ada                 print the compiled system prompt + few-shot
 tutor demo ada                 run a scripted turn and draw the cue timeline
 tutor tools                    dump the tool definitions sent to Claude
+tutor chunk notes.md           preview how a document will be split
+
+These need Postgres (uv sync --extra postgres, DATABASE_URL set):
+
+tutor ingest notes.md --user U --upload ID    index a file
+tutor ask "what's on the midterm" --user U    search it, with the 150ms budget shown
 """
 
 from __future__ import annotations
@@ -154,6 +160,136 @@ def _cmd_demo(args: argparse.Namespace) -> int:
     return asyncio.run(_run_demo(args.persona))
 
 
+# -- retrieval ---------------------------------------------------------------
+
+
+def _embedder(name: str):
+    """Offline by default. The fake ranks plausibly, so `tutor ask` is useful
+    without a Voyage key — just not semantic."""
+    from .retrieval import HashingEmbeddings
+
+    if name == "hashing":
+        return HashingEmbeddings()
+    import os
+
+    from .retrieval.embeddings import VoyageEmbeddings
+
+    key = os.environ.get("VOYAGE_API_KEY")
+    if not key:
+        raise SystemExit("VOYAGE_API_KEY is not set (or pass --embedder hashing)")
+    return VoyageEmbeddings(api_key=key)
+
+
+def _uuid_arg(value: str, what: str) -> str:
+    """Fail with one line instead of an asyncpg codec traceback.
+
+    These ids are pasted from psql often enough that a stray newline or a
+    truncated copy is the normal failure, and the raw error buries that under
+    forty frames of protocol internals.
+    """
+    import uuid
+
+    try:
+        return str(uuid.UUID(value.strip()))
+    except ValueError as exc:
+        raise SystemExit(f"--{what} must be a uuid, got {value.strip()!r}") from exc
+
+
+async def _open_store(args: argparse.Namespace):
+    import os
+
+    try:
+        import asyncpg
+    except ImportError as exc:
+        raise SystemExit(
+            "the postgres extra is not installed. Run: uv sync --extra postgres"
+        ) from exc
+
+    from .retrieval.pgvector import PgVectorRetrieval
+
+    dsn = args.dsn or os.environ.get("DATABASE_URL")
+    if not dsn:
+        raise SystemExit("pass --dsn or set DATABASE_URL")
+    pool = await asyncpg.create_pool(dsn, min_size=1, max_size=2)
+    return pool, PgVectorRetrieval(pool=pool, embeddings=_embedder(args.embedder))
+
+
+async def _run_ingest(args: argparse.Namespace) -> int:
+    from pathlib import Path
+
+    from .retrieval.pgvector import Acl, SourceRef
+
+    path = Path(args.path)
+    text = path.read_text(encoding="utf-8", errors="replace")
+
+    pool, store = await _open_store(args)
+    try:
+        source = SourceRef(
+            user_id=_uuid_arg(args.user, "user"),
+            upload_id=_uuid_arg(args.upload, "upload"),
+        )
+        acl = Acl.shared_with(args.principal) if args.principal else Acl.owner()
+        count = await store.upsert_document(
+            source=source,
+            uri=args.uri or path.as_uri(),
+            title=args.title or path.name,
+            text=text,
+            acl=acl,
+        )
+        print(f"indexed {count} chunk(s) from {path.name}")
+    finally:
+        await pool.close()
+    return 0
+
+
+async def _run_ask(args: argparse.Namespace) -> int:
+    import time
+
+    from .providers.base import Principal
+
+    pool, store = await _open_store(args)
+    try:
+        principal = Principal(user_id=_uuid_arg(args.user, "user"), groups=frozenset(args.group))
+        started = time.perf_counter()
+        hits = await store.search(args.query, principal=principal, limit=args.limit)
+        elapsed = (time.perf_counter() - started) * 1000
+
+        # The in-loop budget is 150ms (§4) and this sits on the critical path
+        # ahead of the model, so print it every time rather than on request.
+        verdict = "OK" if elapsed <= 150 else "OVER BUDGET"
+        print(f"{len(hits)} hit(s) in {elapsed:.0f}ms ({verdict}, budget 150ms)\n")
+        for hit in hits:
+            print(f"  {hit.score:.3f}  {hit.title or hit.uri}")
+            body = " ".join(hit.text.split())
+            print(f"         {body[:160]}{'…' if len(body) > 160 else ''}\n")
+    finally:
+        await pool.close()
+    return 0
+
+
+def _cmd_ingest(args: argparse.Namespace) -> int:
+    return asyncio.run(_run_ingest(args))
+
+
+def _cmd_ask(args: argparse.Namespace) -> int:
+    return asyncio.run(_run_ask(args))
+
+
+def _cmd_chunk(args: argparse.Namespace) -> int:
+    """No database, no keys — just look at how a document will be split."""
+    from pathlib import Path
+
+    from .retrieval import chunk_document
+
+    text = Path(args.path).read_text(encoding="utf-8", errors="replace")
+    chunks = chunk_document(text, target_chars=args.target, overlap_chars=args.overlap)
+    for chunk in chunks:
+        body = " ".join(chunk.text.split())
+        print(f"[{chunk.ix:03d}] {len(chunk.text):5d} chars  {body[:110]}…")
+    print(f"\n{len(chunks)} chunk(s)")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="tutor", description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -172,6 +308,45 @@ def main(argv: list[str] | None = None) -> int:
     tools.add_argument("--json", action="store_true")
     tools.add_argument("--no-strict", action="store_true")
     tools.set_defaults(func=_cmd_tools)
+
+    chunk = sub.add_parser("chunk", help="preview how a document will be split (no database)")
+    chunk.add_argument("path")
+    chunk.add_argument("--target", type=int, default=1200)
+    chunk.add_argument("--overlap", type=int, default=180)
+    chunk.set_defaults(func=_cmd_chunk)
+
+    def _store_args(p: argparse.ArgumentParser) -> None:
+        p.add_argument("--dsn", help="defaults to $DATABASE_URL")
+        p.add_argument("--user", required=True, help="owning user id (uuid)")
+        p.add_argument(
+            "--embedder",
+            default="hashing",
+            choices=("hashing", "voyage"),
+            help="hashing runs offline; voyage needs VOYAGE_API_KEY",
+        )
+
+    ingest = sub.add_parser("ingest", help="chunk, embed, and index a local file")
+    _store_args(ingest)
+    ingest.add_argument("path")
+    ingest.add_argument("--upload", required=True, help="uploads.id this file was stored as")
+    ingest.add_argument("--uri")
+    ingest.add_argument("--title")
+    ingest.add_argument(
+        "--principal",
+        action="append",
+        default=[],
+        help="restrict to these ACL principals (repeatable); omit for owner-only",
+    )
+    ingest.set_defaults(func=_cmd_ingest)
+
+    ask = sub.add_parser("ask", help="search the index as a given principal")
+    _store_args(ask)
+    ask.add_argument("query")
+    ask.add_argument(
+        "--group", action="append", default=[], help="a group the requester holds (repeatable)"
+    )
+    ask.add_argument("--limit", type=int, default=5)
+    ask.set_defaults(func=_cmd_ask)
 
     args = parser.parse_args(argv)
     return int(args.func(args))

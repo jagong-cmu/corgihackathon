@@ -1,4 +1,4 @@
--- Reverse of 0011. `make verify` fails if anything survives in public.
+-- Reverse of 0013. `make verify` fails if anything survives in public.
 
 -- 3. Restore the original (stricter) consent constraint.
 ALTER TABLE personas DROP CONSTRAINT personas_real_person_requires_consent;

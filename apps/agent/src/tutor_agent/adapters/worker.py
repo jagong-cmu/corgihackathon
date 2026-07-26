@@ -39,6 +39,41 @@ log = logging.getLogger("tutor.worker")
 
 DEFAULT_PERSONA = os.environ.get("TUTOR_PERSONA", "ada")
 
+# End-of-user-speech to first tutor audio (§4).
+BUDGET_MS = 1200
+
+
+def _round(value: float | None) -> float | None:
+    return None if value is None else round(value, 1)
+
+
+class TurnMetricsSink:
+    """Append one JSON object per turn to TUTOR_METRICS_PATH.
+
+    A live session is the only place the latency numbers exist, and reading them
+    out of scrollback afterwards does not work — you want to sort by
+    firstAudioMs, not scroll. Disabled unless the path is set, and a broken sink
+    must never take down a session, so write errors are logged once and dropped.
+    """
+
+    def __init__(self, path: str | None) -> None:
+        self.path = path
+        self._warned = False
+        if path:
+            log.info("writing per-turn metrics to %s", path)
+
+    def record(self, row: dict) -> None:
+        if not self.path:
+            return
+        try:
+            with open(self.path, "a", encoding="utf-8") as handle:
+                handle.write(json.dumps(row) + "\n")
+        except OSError as exc:
+            if not self._warned:
+                log.warning("metrics sink disabled: %s", exc)
+                self._warned = True
+
+
 # Scribe v2 Realtime input rate. Distinct from SAMPLE_RATE, which is the 48kHz
 # output rate we publish at.
 STT_SAMPLE_RATE = 16_000
@@ -71,6 +106,7 @@ async def entrypoint(ctx: agents.JobContext) -> None:
     )
 
     adapter = LiveKitAdapter(room=ctx.room, audio_source=source)
+    pool, retrieval = await _maybe_open_retrieval()
     session = TutorSession(
         persona=persona,
         llm=AnthropicLLM(model="claude-sonnet-5", effort="low"),
@@ -78,8 +114,12 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         # native rate — mp3 into an AudioSource is noise.
         tts=make_tts(persona, sample_rate=SAMPLE_RATE),
         channel=adapter,
+        retrieval=retrieval,
         config=SessionConfig(),
+        user_id=os.environ.get("TUTOR_USER_ID", "dev"),
     )
+    if pool is not None:
+        ctx.add_shutdown_callback(pool.close)
 
     stt = lk_elevenlabs.STT(
         use_realtime=True,
@@ -104,27 +144,56 @@ async def entrypoint(ctx: agents.JobContext) -> None:
 
     turn_lock = asyncio.Lock()
     speech_ended_at: float | None = None
+    metrics = TurnMetricsSink(os.environ.get("TUTOR_METRICS_PATH"))
 
     async def run_turn(transcript: str) -> None:
         """One turn. Serialized so a fast follow-up queues instead of racing."""
         nonlocal speech_ended_at
         async with turn_lock:
             started = time.perf_counter()
+            # STT finalization is dead time the learner hears as silence, and
+            # TurnResult can't see it — measure it here or not at all.
+            stt_finalize_ms = (
+                (started - speech_ended_at) * 1000 if speech_ended_at is not None else None
+            )
             result = await session.handle_transcript(transcript)
+            wall_ms = (time.perf_counter() - started) * 1000
 
-            if result.first_audio_ms is not None:
-                # Budget is measured from end-of-user-speech, not turn start.
-                base = speech_ended_at if speech_ended_at is not None else started
-                total = (started - base) * 1000 + result.first_audio_ms
-                verdict = "OK" if total <= 1200 else "OVER"
+            total = (
+                (stt_finalize_ms or 0.0) + result.first_audio_ms
+                if result.first_audio_ms is not None
+                else None
+            )
+            if total is not None:
                 log.info(
-                    "turn %s first-audio %.0fms (%s, budget 1200ms) actions=%d dropped=%d",
+                    "turn %s first-audio %.0fms (%s, budget %dms) actions=%d dropped=%d",
                     result.turn_id,
                     total,
-                    verdict,
+                    "OK" if total <= BUDGET_MS else "OVER",
+                    BUDGET_MS,
                     len(result.actions),
                     len(result.dropped_actions),
                 )
+            metrics.record(
+                {
+                    "turnId": result.turn_id,
+                    "persona": persona.id,
+                    "avatar": persona.avatar.provider if avatar is not None else None,
+                    "transcriptChars": len(transcript),
+                    # The three legs of the budget, separated so a regression
+                    # points at a subsystem instead of at "the loop got slower".
+                    "sttFinalizeMs": _round(stt_finalize_ms),
+                    "modelToFirstAudioMs": _round(result.first_audio_ms),
+                    "firstAudioMs": _round(total),
+                    "withinBudget": None if total is None else total <= BUDGET_MS,
+                    "turnWallMs": _round(wall_ms),
+                    "actions": len(result.actions),
+                    "droppedActions": [name for name, _ in result.dropped_actions],
+                    "cancelled": result.cancelled,
+                    "stopReason": result.stop_reason,
+                    "speechChars": len(result.speech_text),
+                }
+            )
             speech_ended_at = None
 
     # -- inbound: student events from the canvas client ---------------------
@@ -210,9 +279,49 @@ if __name__ == "__main__":
     main()
 
 
+async def _maybe_open_retrieval():
+    """Open the sync-plane index if one is configured, else run without it.
+
+    Returns (pool, provider). Retrieval is optional the same way the avatar is:
+    a tutor with no indexed materials is a worse tutor, not a broken one, and
+    a database that is down must not take the voice loop with it.
+
+    The pool is opened once per worker process, not per turn — connection setup
+    does not fit inside the 150ms in-loop budget (§4).
+    """
+    dsn = os.environ.get("DATABASE_URL")
+    if not dsn:
+        log.info("retrieval disabled — set DATABASE_URL to teach from synced materials")
+        return None, None
+
+    try:
+        import asyncpg
+
+        from ..retrieval.embeddings import HashingEmbeddings, VoyageEmbeddings
+        from ..retrieval.pgvector import PgVectorRetrieval
+
+        voyage_key = os.environ.get("VOYAGE_API_KEY")
+        if voyage_key:
+            embeddings = VoyageEmbeddings(api_key=voyage_key)
+        else:
+            # Lexical, not semantic. Fine for a local demo, wrong for a real
+            # session — say so rather than quietly returning bad matches.
+            log.warning(
+                "VOYAGE_API_KEY unset — falling back to hashing embeddings. "
+                "Retrieval will be keyword-ish, not semantic."
+            )
+            embeddings = HashingEmbeddings()
+
+        pool = await asyncpg.create_pool(dsn, min_size=1, max_size=4)
+        log.info("retrieval enabled against %s", dsn.rsplit("@", 1)[-1])
+        return pool, PgVectorRetrieval(pool=pool, embeddings=embeddings)
+    except Exception:
+        log.exception("could not open retrieval — continuing without indexed materials")
+        return None, None
+
+
 async def _maybe_start_avatar(ctx: agents.JobContext, persona) -> LiveKitAvatar | None:
     """Start the avatar the persona asks for, if credentials are present.
-
     Returns None rather than raising: a missing key or a vendor outage should
     degrade the session to voice-only, not end it.
     """
