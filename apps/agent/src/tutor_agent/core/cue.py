@@ -144,6 +144,19 @@ class TurnTimeline:
         self._pending.append(pending)
         return pending
 
+    def emit_now(self, pending: PendingAction) -> TimedAction:
+        """Resolve `pending` to cue 0 immediately and mark it emitted.
+
+        For actions that wait on no narration (present_visual mounts the
+        board with every step hidden). resolve_ready only releases an action
+        once its segment's timings land, which for the turn's first action
+        means after the whole first sentence has synthesized — dead seconds
+        during which the learner stares at an empty board. Marking the seq
+        emitted keeps resolve_ready/resolve_remaining from sending it twice.
+        """
+        self._emitted.add(pending.seq)
+        return TimedAction(action=pending.action, seq=pending.seq, cue_ms=0)
+
     def attach_timings(self, timings: CharacterTimings) -> None:
         """Attach timings for the next speech segment, in synthesis order."""
         self._segments.append(timings)
