@@ -1,0 +1,85 @@
+{
+  "name": "worked-quadratic",
+  "description": "Student asks how to solve x^2 - 4x + 3 = 0. Tutor opens a section, writes the equation, works it in steps, and highlights the factored terms as it names them.",
+  "messages": [
+    {
+      "type": "canvas_action",
+      "turnId": "t_0001",
+      "seq": 0,
+      "cueMs": 0,
+      "action": { "type": "new_section", "title": "Solving x² − 4x + 3 = 0" }
+    },
+    {
+      "type": "canvas_action",
+      "turnId": "t_0001",
+      "seq": 1,
+      "cueMs": 320,
+      "action": {
+        "type": "equation",
+        "x": 80,
+        "y": 60,
+        "id": "eq_original",
+        "latex": "x^2 - 4x + 3 = 0"
+      }
+    },
+    {
+      "type": "canvas_action",
+      "turnId": "t_0001",
+      "seq": 2,
+      "cueMs": 2140,
+      "action": {
+        "type": "write_steps",
+        "x": 80,
+        "y": 160,
+        "id": "steps_factor",
+        "reveal": "one_by_one",
+        "lines": [
+          "Look for two numbers that multiply to 3 and add to −4",
+          "−1 and −3 work",
+          "(x − 1)(x − 3) = 0",
+          "x = 1 or x = 3"
+        ]
+      }
+    },
+    {
+      "type": "canvas_action",
+      "turnId": "t_0001",
+      "seq": 3,
+      "cueMs": 5980,
+      "action": {
+        "type": "highlight",
+        "target": { "shapeId": "steps_factor", "sub": "line:2" },
+        "color": "yellow"
+      }
+    },
+    {
+      "type": "canvas_action",
+      "turnId": "t_0001",
+      "seq": 4,
+      "cueMs": 7410,
+      "action": { "type": "point_at", "target": "steps_factor", "style": "laser", "holdMs": 1200 }
+    },
+    {
+      "type": "canvas_action",
+      "turnId": "t_0001",
+      "seq": 5,
+      "cueMs": 9200,
+      "action": {
+        "type": "graph",
+        "x": 420,
+        "y": 160,
+        "id": "graph_parabola",
+        "spec": {
+          "xRange": [-2, 6],
+          "yRange": [-3, 6],
+          "functions": [{ "expr": "x^2 - 4*x + 3", "label": "y = x² − 4x + 3" }],
+          "points": [
+            { "x": 1, "y": 0, "label": "x = 1" },
+            { "x": 3, "y": 0, "label": "x = 3" }
+          ],
+          "showGrid": true
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,2683 @@
+{
+  "$comment": "Generated from @tutor/canvas-protocol. Do not edit by hand.",
+  "protocolVersion": "0.1.0",
+  "actions": {
+    "point_at": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "target": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64,
+              "description": "Id of a shape on the board, either tldraw-assigned (shape:abc) or one you assigned earlier."
+            },
+            {
+              "type": "object",
+              "properties": {
+                "x": {
+                  "type": "number",
+                  "description": "Horizontal offset from the current section's left edge, 0-800."
+                },
+                "y": {
+                  "type": "number",
+                  "description": "Vertical offset from the current section's top edge, 0-600."
+                }
+              },
+              "required": [
+                "x",
+                "y"
+              ],
+              "additionalProperties": false,
+              "description": "A point relative to the current section's origin."
+            }
+          ],
+          "description": "Either the id of an existing shape, or a raw {x, y} point in the current section."
+        },
+        "style": {
+          "default": "laser",
+          "description": "'laser' is a transient dot for deixis; 'arrow' persists until the section changes.",
+          "type": "string",
+          "enum": [
+            "laser",
+            "arrow"
+          ]
+        },
+        "holdMs": {
+          "default": 1500,
+          "description": "How long the pointer stays visible.",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10000
+        }
+      },
+      "required": [
+        "target"
+      ],
+      "additionalProperties": false
+    },
+    "highlight": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "target": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64,
+              "description": "Id of a shape on the board, either tldraw-assigned (shape:abc) or one you assigned earlier."
+            },
+            {
+              "type": "object",
+              "properties": {
+                "shapeId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 64,
+                  "description": "Id of a shape on the board, either tldraw-assigned (shape:abc) or one you assigned earlier."
+                },
+                "sub": {
+                  "type": "string",
+                  "description": "Sub-target inside a composite shape, e.g. 'term:3' for the 4th term of an EquationShape or 'line:2' for a StepsShape line."
+                }
+              },
+              "required": [
+                "shapeId",
+                "sub"
+              ],
+              "additionalProperties": false
+            }
+          ]
+        },
+        "color": {
+          "default": "yellow",
+          "type": "string",
+          "enum": [
+            "yellow",
+            "green",
+            "blue",
+            "red",
+            "violet",
+            "orange",
+            "grey"
+          ],
+          "description": "Semantic highlight color; the client maps it to the active board theme."
+        }
+      },
+      "required": [
+        "target"
+      ],
+      "additionalProperties": false
+    },
+    "write_steps": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "x": {
+          "type": "number",
+          "description": "Horizontal offset from the current section's left edge, 0-800."
+        },
+        "y": {
+          "type": "number",
+          "description": "Vertical offset from the current section's top edge, 0-600."
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]{0,47}$",
+          "description": "Stable id you assign to this shape so you can reference it in later actions, e.g. 'eq_quadratic' or 'sim_collision'."
+        },
+        "lines": {
+          "minItems": 1,
+          "maxItems": 12,
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Worked-problem lines, one per step. Keep each under ~80 characters."
+        },
+        "reveal": {
+          "default": "one_by_one",
+          "description": "'one_by_one' reveals lines as you narrate them; use it for anything you're explaining.",
+          "type": "string",
+          "enum": [
+            "one_by_one",
+            "all"
+          ]
+        }
+      },
+      "required": [
+        "x",
+        "y",
+        "id",
+        "lines"
+      ],
+      "additionalProperties": false
+    },
+    "equation": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "x": {
+          "type": "number",
+          "description": "Horizontal offset from the current section's left edge, 0-800."
+        },
+        "y": {
+          "type": "number",
+          "description": "Vertical offset from the current section's top edge, 0-600."
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]{0,47}$",
+          "description": "Stable id you assign to this shape so you can reference it in later actions, e.g. 'eq_quadratic' or 'sim_collision'."
+        },
+        "latex": {
+          "type": "string",
+          "description": "KaTeX-compatible LaTeX, without surrounding $ delimiters."
+        }
+      },
+      "required": [
+        "x",
+        "y",
+        "id",
+        "latex"
+      ],
+      "additionalProperties": false
+    },
+    "graph": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "x": {
+          "type": "number",
+          "description": "Horizontal offset from the current section's left edge, 0-800."
+        },
+        "y": {
+          "type": "number",
+          "description": "Vertical offset from the current section's top edge, 0-600."
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]{0,47}$",
+          "description": "Stable id you assign to this shape so you can reference it in later actions, e.g. 'eq_quadratic' or 'sim_collision'."
+        },
+        "spec": {
+          "type": "object",
+          "properties": {
+            "xRange": {
+              "default": [
+                -10,
+                10
+              ],
+              "type": "array",
+              "prefixItems": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                }
+              ]
+            },
+            "yRange": {
+              "default": [
+                -10,
+                10
+              ],
+              "type": "array",
+              "prefixItems": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                }
+              ]
+            },
+            "functions": {
+              "maxItems": 6,
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "expr": {
+                    "type": "string",
+                    "description": "Function of x in plain math syntax, e.g. 'x^2 - 4*x + 3' or 'sin(x)/x'."
+                  },
+                  "label": {
+                    "type": "string"
+                  },
+                  "color": {
+                    "type": "string"
+                  },
+                  "domain": {
+                    "type": "array",
+                    "prefixItems": [
+                      {
+                        "type": "number"
+                      },
+                      {
+                        "type": "number"
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "expr"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "points": {
+              "maxItems": 24,
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "x": {
+                    "type": "number"
+                  },
+                  "y": {
+                    "type": "number"
+                  },
+                  "label": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "x",
+                  "y"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "tangents": {
+              "maxItems": 6,
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "fnIndex": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "at": {
+                    "type": "number",
+                    "description": "x value at which to draw the tangent line."
+                  },
+                  "label": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "fnIndex",
+                  "at"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "shaded": {
+              "maxItems": 6,
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "fnIndex": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "from": {
+                    "type": "number"
+                  },
+                  "to": {
+                    "type": "number"
+                  },
+                  "label": {
+                    "description": "e.g. 'area = 4.5'",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "fnIndex",
+                  "from",
+                  "to"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "parameters": {
+              "maxItems": 4,
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "description": "Symbol usable inside function expressions, e.g. 'a'."
+                  },
+                  "value": {
+                    "type": "number"
+                  },
+                  "min": {
+                    "type": "number"
+                  },
+                  "max": {
+                    "type": "number"
+                  },
+                  "step": {
+                    "type": "number",
+                    "exclusiveMinimum": 0
+                  }
+                },
+                "required": [
+                  "name",
+                  "value",
+                  "min",
+                  "max"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "showGrid": {
+              "type": "boolean"
+            },
+            "xLabel": {
+              "type": "string"
+            },
+            "yLabel": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "x",
+        "y",
+        "id",
+        "spec"
+      ],
+      "additionalProperties": false
+    },
+    "spawn_sim": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "x": {
+          "type": "number",
+          "description": "Horizontal offset from the current section's left edge, 0-800."
+        },
+        "y": {
+          "type": "number",
+          "description": "Vertical offset from the current section's top edge, 0-600."
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]{0,47}$",
+          "description": "Stable id you assign to this shape so you can reference it in later actions, e.g. 'eq_quadratic' or 'sim_collision'."
+        },
+        "spec": {
+          "type": "object",
+          "properties": {
+            "template": {
+              "type": "string",
+              "enum": [
+                "collision_2body",
+                "projectile",
+                "inclined_plane",
+                "pendulum",
+                "distribution_sampler",
+                "function_explorer",
+                "timeline",
+                "labeled_diagram",
+                "annotated_map",
+                "flow_diagram",
+                "p5_sketch"
+              ]
+            },
+            "theme": {
+              "type": "string",
+              "description": "Interest-taxonomy key that resolves sprites, e.g. 'basketball'. Must come from the learner's interest profile — never free text."
+            },
+            "objects": {
+              "minItems": 1,
+              "maxItems": 12,
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "sprite": {
+                    "type": "string",
+                    "description": "Sprite key resolved against the learner's themed asset pack, falling back to a built-in procedural sprite."
+                  },
+                  "label": {
+                    "description": "Label rendered next to the object, e.g. 'Ball A'.",
+                    "type": "string"
+                  },
+                  "mass": {
+                    "type": "number",
+                    "exclusiveMinimum": 0
+                  },
+                  "v": {
+                    "description": "Initial velocity along the template's primary axis.",
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "sprite"
+                ],
+                "additionalProperties": {}
+              }
+            },
+            "params": {
+              "description": "Template-specific parameters, e.g. { restitution: 0.85 }.",
+              "type": "object",
+              "propertyNames": {
+                "type": "string"
+              },
+              "additionalProperties": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "boolean"
+                  }
+                ]
+              }
+            },
+            "overlays": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "force_vectors",
+                  "velocity_vectors",
+                  "momentum_hud",
+                  "energy_hud",
+                  "slowmo_at_impact",
+                  "trace_path",
+                  "grid"
+                ],
+                "description": "Visual overlay computed from the simulation state, not drawn by hand."
+              }
+            },
+            "beats": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "at": {
+                    "type": "string",
+                    "description": "Named engine event to fire on, e.g. 'impact', 'apex', 'rest'. Template-specific."
+                  },
+                  "say": {
+                    "type": "string",
+                    "description": "Narration text to speak when this event fires."
+                  }
+                },
+                "required": [
+                  "at",
+                  "say"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "seed": {
+              "description": "Seed for any randomness. Required for reproducible replay; the client supplies one if omitted.",
+              "type": "integer",
+              "minimum": -9007199254740991,
+              "maximum": 9007199254740991
+            }
+          },
+          "required": [
+            "template",
+            "theme",
+            "objects"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "x",
+        "y",
+        "id",
+        "spec"
+      ],
+      "additionalProperties": false
+    },
+    "sim_control": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "description": "Id of a simulation you created with spawn_sim."
+        },
+        "op": {
+          "type": "string",
+          "enum": [
+            "play",
+            "pause",
+            "replay",
+            "speed"
+          ]
+        },
+        "value": {
+          "description": "Playback rate; required when op is 'speed' (1 = realtime, 0.25 = slow motion).",
+          "type": "number",
+          "exclusiveMinimum": 0
+        }
+      },
+      "required": [
+        "id",
+        "op"
+      ],
+      "additionalProperties": false
+    },
+    "sim_update": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "description": "Id of a shape on the board, either tldraw-assigned (shape:abc) or one you assigned earlier."
+        },
+        "param": {
+          "type": "string",
+          "description": "Parameter name from the simulation's spec.params."
+        },
+        "value": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "string"
+            },
+            {
+              "type": "boolean"
+            }
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "param",
+        "value"
+      ],
+      "additionalProperties": false
+    },
+    "show_source": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "x": {
+          "type": "number",
+          "description": "Horizontal offset from the current section's left edge, 0-800."
+        },
+        "y": {
+          "type": "number",
+          "description": "Vertical offset from the current section's top edge, 0-600."
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]{0,47}$",
+          "description": "Stable id you assign to this shape so you can reference it in later actions, e.g. 'eq_quadratic' or 'sim_collision'."
+        },
+        "source": {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "chunkId": {
+                  "type": "string",
+                  "description": "Id of a chunk already in the retrieval index."
+                }
+              },
+              "required": [
+                "chunkId"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "mergeFileRef": {
+                  "type": "object",
+                  "properties": {
+                    "linkedAccountId": {
+                      "type": "string"
+                    },
+                    "remoteId": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "linkedAccountId",
+                    "remoteId"
+                  ],
+                  "additionalProperties": false,
+                  "description": "A file the action plane fetched that is not yet indexed."
+                }
+              },
+              "required": [
+                "mergeFileRef"
+              ],
+              "additionalProperties": false
+            }
+          ]
+        },
+        "region": {
+          "description": "Crop within the source document, if only part is relevant.",
+          "type": "object",
+          "properties": {
+            "x": {
+              "type": "number"
+            },
+            "y": {
+              "type": "number"
+            },
+            "w": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "h": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            }
+          },
+          "required": [
+            "x",
+            "y",
+            "w",
+            "h"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "x",
+        "y",
+        "id",
+        "source"
+      ],
+      "additionalProperties": false
+    },
+    "new_section": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "title": {
+          "type": "string",
+          "maxLength": 80,
+          "description": "Heading for the new section, e.g. 'Part 2: the derivative'."
+        }
+      },
+      "required": [
+        "title"
+      ],
+      "additionalProperties": false
+    },
+    "clear_region": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "bounds": {
+          "type": "object",
+          "properties": {
+            "x": {
+              "type": "number"
+            },
+            "y": {
+              "type": "number"
+            },
+            "w": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "h": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            }
+          },
+          "required": [
+            "x",
+            "y",
+            "w",
+            "h"
+          ],
+          "additionalProperties": false,
+          "description": "A rectangle relative to the current section's origin."
+        }
+      },
+      "required": [
+        "bounds"
+      ],
+      "additionalProperties": false
+    },
+    "camera": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "op": {
+          "type": "string",
+          "const": "focus"
+        },
+        "target": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64,
+              "description": "Id of a shape on the board, either tldraw-assigned (shape:abc) or one you assigned earlier."
+            },
+            {
+              "type": "object",
+              "properties": {
+                "x": {
+                  "type": "number"
+                },
+                "y": {
+                  "type": "number"
+                },
+                "w": {
+                  "type": "number",
+                  "exclusiveMinimum": 0
+                },
+                "h": {
+                  "type": "number",
+                  "exclusiveMinimum": 0
+                }
+              },
+              "required": [
+                "x",
+                "y",
+                "w",
+                "h"
+              ],
+              "additionalProperties": false,
+              "description": "A rectangle relative to the current section's origin."
+            }
+          ]
+        }
+      },
+      "required": [
+        "op",
+        "target"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "canvasAction": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "oneOf": [
+      {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "point_at"
+          },
+          "target": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64,
+                "description": "Id of a shape on the board, either tldraw-assigned (shape:abc) or one you assigned earlier."
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "x": {
+                    "type": "number",
+                    "description": "Horizontal offset from the current section's left edge, 0-800."
+                  },
+                  "y": {
+                    "type": "number",
+                    "description": "Vertical offset from the current section's top edge, 0-600."
+                  }
+                },
+                "required": [
+                  "x",
+                  "y"
+                ],
+                "additionalProperties": false,
+                "description": "A point relative to the current section's origin."
+              }
+            ],
+            "description": "Either the id of an existing shape, or a raw {x, y} point in the current section."
+          },
+          "style": {
+            "default": "laser",
+            "description": "'laser' is a transient dot for deixis; 'arrow' persists until the section changes.",
+            "type": "string",
+            "enum": [
+              "laser",
+              "arrow"
+            ]
+          },
+          "holdMs": {
+            "default": 1500,
+            "description": "How long the pointer stays visible.",
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 10000
+          }
+        },
+        "required": [
+          "type",
+          "target"
+        ]
+      },
+      {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "highlight"
+          },
+          "target": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64,
+                "description": "Id of a shape on the board, either tldraw-assigned (shape:abc) or one you assigned earlier."
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "shapeId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64,
+                    "description": "Id of a shape on the board, either tldraw-assigned (shape:abc) or one you assigned earlier."
+                  },
+                  "sub": {
+                    "type": "string",
+                    "description": "Sub-target inside a composite shape, e.g. 'term:3' for the 4th term of an EquationShape or 'line:2' for a StepsShape line."
+                  }
+                },
+                "required": [
+                  "shapeId",
+                  "sub"
+                ],
+                "additionalProperties": false
+              }
+            ]
+          },
+          "color": {
+            "default": "yellow",
+            "type": "string",
+            "enum": [
+              "yellow",
+              "green",
+              "blue",
+              "red",
+              "violet",
+              "orange",
+              "grey"
+            ],
+            "description": "Semantic highlight color; the client maps it to the active board theme."
+          }
+        },
+        "required": [
+          "type",
+          "target"
+        ]
+      },
+      {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "write_steps"
+          },
+          "x": {
+            "type": "number",
+            "description": "Horizontal offset from the current section's left edge, 0-800."
+          },
+          "y": {
+            "type": "number",
+            "description": "Vertical offset from the current section's top edge, 0-600."
+          },
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]{0,47}$",
+            "description": "Stable id you assign to this shape so you can reference it in later actions, e.g. 'eq_quadratic' or 'sim_collision'."
+          },
+          "lines": {
+            "minItems": 1,
+            "maxItems": 12,
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Worked-problem lines, one per step. Keep each under ~80 characters."
+          },
+          "reveal": {
+            "default": "one_by_one",
+            "description": "'one_by_one' reveals lines as you narrate them; use it for anything you're explaining.",
+            "type": "string",
+            "enum": [
+              "one_by_one",
+              "all"
+            ]
+          }
+        },
+        "required": [
+          "type",
+          "x",
+          "y",
+          "id",
+          "lines"
+        ]
+      },
+      {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "equation"
+          },
+          "x": {
+            "type": "number",
+            "description": "Horizontal offset from the current section's left edge, 0-800."
+          },
+          "y": {
+            "type": "number",
+            "description": "Vertical offset from the current section's top edge, 0-600."
+          },
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]{0,47}$",
+            "description": "Stable id you assign to this shape so you can reference it in later actions, e.g. 'eq_quadratic' or 'sim_collision'."
+          },
+          "latex": {
+            "type": "string",
+            "description": "KaTeX-compatible LaTeX, without surrounding $ delimiters."
+          }
+        },
+        "required": [
+          "type",
+          "x",
+          "y",
+          "id",
+          "latex"
+        ]
+      },
+      {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "graph"
+          },
+          "x": {
+            "type": "number",
+            "description": "Horizontal offset from the current section's left edge, 0-800."
+          },
+          "y": {
+            "type": "number",
+            "description": "Vertical offset from the current section's top edge, 0-600."
+          },
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]{0,47}$",
+            "description": "Stable id you assign to this shape so you can reference it in later actions, e.g. 'eq_quadratic' or 'sim_collision'."
+          },
+          "spec": {
+            "type": "object",
+            "properties": {
+              "xRange": {
+                "default": [
+                  -10,
+                  10
+                ],
+                "type": "array",
+                "prefixItems": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "number"
+                  }
+                ]
+              },
+              "yRange": {
+                "default": [
+                  -10,
+                  10
+                ],
+                "type": "array",
+                "prefixItems": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "number"
+                  }
+                ]
+              },
+              "functions": {
+                "maxItems": 6,
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "expr": {
+                      "type": "string",
+                      "description": "Function of x in plain math syntax, e.g. 'x^2 - 4*x + 3' or 'sin(x)/x'."
+                    },
+                    "label": {
+                      "type": "string"
+                    },
+                    "color": {
+                      "type": "string"
+                    },
+                    "domain": {
+                      "type": "array",
+                      "prefixItems": [
+                        {
+                          "type": "number"
+                        },
+                        {
+                          "type": "number"
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "expr"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "points": {
+                "maxItems": 24,
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "x": {
+                      "type": "number"
+                    },
+                    "y": {
+                      "type": "number"
+                    },
+                    "label": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "x",
+                    "y"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "tangents": {
+                "maxItems": 6,
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "fnIndex": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    "at": {
+                      "type": "number",
+                      "description": "x value at which to draw the tangent line."
+                    },
+                    "label": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "fnIndex",
+                    "at"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "shaded": {
+                "maxItems": 6,
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "fnIndex": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    "from": {
+                      "type": "number"
+                    },
+                    "to": {
+                      "type": "number"
+                    },
+                    "label": {
+                      "description": "e.g. 'area = 4.5'",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "fnIndex",
+                    "from",
+                    "to"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "parameters": {
+                "maxItems": 4,
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string",
+                      "description": "Symbol usable inside function expressions, e.g. 'a'."
+                    },
+                    "value": {
+                      "type": "number"
+                    },
+                    "min": {
+                      "type": "number"
+                    },
+                    "max": {
+                      "type": "number"
+                    },
+                    "step": {
+                      "type": "number",
+                      "exclusiveMinimum": 0
+                    }
+                  },
+                  "required": [
+                    "name",
+                    "value",
+                    "min",
+                    "max"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "showGrid": {
+                "type": "boolean"
+              },
+              "xLabel": {
+                "type": "string"
+              },
+              "yLabel": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "type",
+          "x",
+          "y",
+          "id",
+          "spec"
+        ]
+      },
+      {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "spawn_sim"
+          },
+          "x": {
+            "type": "number",
+            "description": "Horizontal offset from the current section's left edge, 0-800."
+          },
+          "y": {
+            "type": "number",
+            "description": "Vertical offset from the current section's top edge, 0-600."
+          },
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]{0,47}$",
+            "description": "Stable id you assign to this shape so you can reference it in later actions, e.g. 'eq_quadratic' or 'sim_collision'."
+          },
+          "spec": {
+            "type": "object",
+            "properties": {
+              "template": {
+                "type": "string",
+                "enum": [
+                  "collision_2body",
+                  "projectile",
+                  "inclined_plane",
+                  "pendulum",
+                  "distribution_sampler",
+                  "function_explorer",
+                  "timeline",
+                  "labeled_diagram",
+                  "annotated_map",
+                  "flow_diagram",
+                  "p5_sketch"
+                ]
+              },
+              "theme": {
+                "type": "string",
+                "description": "Interest-taxonomy key that resolves sprites, e.g. 'basketball'. Must come from the learner's interest profile — never free text."
+              },
+              "objects": {
+                "minItems": 1,
+                "maxItems": 12,
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "sprite": {
+                      "type": "string",
+                      "description": "Sprite key resolved against the learner's themed asset pack, falling back to a built-in procedural sprite."
+                    },
+                    "label": {
+                      "description": "Label rendered next to the object, e.g. 'Ball A'.",
+                      "type": "string"
+                    },
+                    "mass": {
+                      "type": "number",
+                      "exclusiveMinimum": 0
+                    },
+                    "v": {
+                      "description": "Initial velocity along the template's primary axis.",
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "sprite"
+                  ],
+                  "additionalProperties": {}
+                }
+              },
+              "params": {
+                "description": "Template-specific parameters, e.g. { restitution: 0.85 }.",
+                "type": "object",
+                "propertyNames": {
+                  "type": "string"
+                },
+                "additionalProperties": {
+                  "anyOf": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "boolean"
+                    }
+                  ]
+                }
+              },
+              "overlays": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "force_vectors",
+                    "velocity_vectors",
+                    "momentum_hud",
+                    "energy_hud",
+                    "slowmo_at_impact",
+                    "trace_path",
+                    "grid"
+                  ],
+                  "description": "Visual overlay computed from the simulation state, not drawn by hand."
+                }
+              },
+              "beats": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "at": {
+                      "type": "string",
+                      "description": "Named engine event to fire on, e.g. 'impact', 'apex', 'rest'. Template-specific."
+                    },
+                    "say": {
+                      "type": "string",
+                      "description": "Narration text to speak when this event fires."
+                    }
+                  },
+                  "required": [
+                    "at",
+                    "say"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "seed": {
+                "description": "Seed for any randomness. Required for reproducible replay; the client supplies one if omitted.",
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              }
+            },
+            "required": [
+              "template",
+              "theme",
+              "objects"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "type",
+          "x",
+          "y",
+          "id",
+          "spec"
+        ]
+      },
+      {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "sim_control"
+          },
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "description": "Id of a simulation you created with spawn_sim."
+          },
+          "op": {
+            "type": "string",
+            "enum": [
+              "play",
+              "pause",
+              "replay",
+              "speed"
+            ]
+          },
+          "value": {
+            "description": "Playback rate; required when op is 'speed' (1 = realtime, 0.25 = slow motion).",
+            "type": "number",
+            "exclusiveMinimum": 0
+          }
+        },
+        "required": [
+          "type",
+          "id",
+          "op"
+        ]
+      },
+      {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "sim_update"
+          },
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "description": "Id of a shape on the board, either tldraw-assigned (shape:abc) or one you assigned earlier."
+          },
+          "param": {
+            "type": "string",
+            "description": "Parameter name from the simulation's spec.params."
+          },
+          "value": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "boolean"
+              }
+            ]
+          }
+        },
+        "required": [
+          "type",
+          "id",
+          "param",
+          "value"
+        ]
+      },
+      {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "show_source"
+          },
+          "x": {
+            "type": "number",
+            "description": "Horizontal offset from the current section's left edge, 0-800."
+          },
+          "y": {
+            "type": "number",
+            "description": "Vertical offset from the current section's top edge, 0-600."
+          },
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]{0,47}$",
+            "description": "Stable id you assign to this shape so you can reference it in later actions, e.g. 'eq_quadratic' or 'sim_collision'."
+          },
+          "source": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "chunkId": {
+                    "type": "string",
+                    "description": "Id of a chunk already in the retrieval index."
+                  }
+                },
+                "required": [
+                  "chunkId"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "mergeFileRef": {
+                    "type": "object",
+                    "properties": {
+                      "linkedAccountId": {
+                        "type": "string"
+                      },
+                      "remoteId": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "linkedAccountId",
+                      "remoteId"
+                    ],
+                    "additionalProperties": false,
+                    "description": "A file the action plane fetched that is not yet indexed."
+                  }
+                },
+                "required": [
+                  "mergeFileRef"
+                ],
+                "additionalProperties": false
+              }
+            ]
+          },
+          "region": {
+            "description": "Crop within the source document, if only part is relevant.",
+            "type": "object",
+            "properties": {
+              "x": {
+                "type": "number"
+              },
+              "y": {
+                "type": "number"
+              },
+              "w": {
+                "type": "number",
+                "exclusiveMinimum": 0
+              },
+              "h": {
+                "type": "number",
+                "exclusiveMinimum": 0
+              }
+            },
+            "required": [
+              "x",
+              "y",
+              "w",
+              "h"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "type",
+          "x",
+          "y",
+          "id",
+          "source"
+        ]
+      },
+      {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "new_section"
+          },
+          "title": {
+            "type": "string",
+            "maxLength": 80,
+            "description": "Heading for the new section, e.g. 'Part 2: the derivative'."
+          }
+        },
+        "required": [
+          "type",
+          "title"
+        ]
+      },
+      {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "clear_region"
+          },
+          "bounds": {
+            "type": "object",
+            "properties": {
+              "x": {
+                "type": "number"
+              },
+              "y": {
+                "type": "number"
+              },
+              "w": {
+                "type": "number",
+                "exclusiveMinimum": 0
+              },
+              "h": {
+                "type": "number",
+                "exclusiveMinimum": 0
+              }
+            },
+            "required": [
+              "x",
+              "y",
+              "w",
+              "h"
+            ],
+            "additionalProperties": false,
+            "description": "A rectangle relative to the current section's origin."
+          }
+        },
+        "required": [
+          "type",
+          "bounds"
+        ]
+      },
+      {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "camera"
+          },
+          "op": {
+            "type": "string",
+            "const": "focus"
+          },
+          "target": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64,
+                "description": "Id of a shape on the board, either tldraw-assigned (shape:abc) or one you assigned earlier."
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "x": {
+                    "type": "number"
+                  },
+                  "y": {
+                    "type": "number"
+                  },
+                  "w": {
+                    "type": "number",
+                    "exclusiveMinimum": 0
+                  },
+                  "h": {
+                    "type": "number",
+                    "exclusiveMinimum": 0
+                  }
+                },
+                "required": [
+                  "x",
+                  "y",
+                  "w",
+                  "h"
+                ],
+                "additionalProperties": false,
+                "description": "A rectangle relative to the current section's origin."
+              }
+            ]
+          }
+        },
+        "required": [
+          "type",
+          "op",
+          "target"
+        ]
+      }
+    ]
+  },
+  "agentMessage": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "oneOf": [
+      {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "canvas_action"
+          },
+          "v": {
+            "type": "string",
+            "const": "0.1.0"
+          },
+          "turnId": {
+            "type": "string",
+            "pattern": "^t_\\d{4,}$"
+          },
+          "seq": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991,
+            "description": "Ordering within the turn."
+          },
+          "cueMs": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991,
+            "description": "Offset into this turn's audio at which to apply the action. 0 fires immediately. Derived from the TTS character timestamps of the words this action belongs to."
+          },
+          "action": {
+            "oneOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "const": "point_at"
+                  },
+                  "target": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 64,
+                        "description": "Id of a shape on the board, either tldraw-assigned (shape:abc) or one you assigned earlier."
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "x": {
+                            "type": "number",
+                            "description": "Horizontal offset from the current section's left edge, 0-800."
+                          },
+                          "y": {
+                            "type": "number",
+                            "description": "Vertical offset from the current section's top edge, 0-600."
+                          }
+                        },
+                        "required": [
+                          "x",
+                          "y"
+                        ],
+                        "additionalProperties": false,
+                        "description": "A point relative to the current section's origin."
+                      }
+                    ],
+                    "description": "Either the id of an existing shape, or a raw {x, y} point in the current section."
+                  },
+                  "style": {
+                    "default": "laser",
+                    "description": "'laser' is a transient dot for deixis; 'arrow' persists until the section changes.",
+                    "type": "string",
+                    "enum": [
+                      "laser",
+                      "arrow"
+                    ]
+                  },
+                  "holdMs": {
+                    "default": 1500,
+                    "description": "How long the pointer stays visible.",
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 10000
+                  }
+                },
+                "required": [
+                  "type",
+                  "target"
+                ]
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "const": "highlight"
+                  },
+                  "target": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 64,
+                        "description": "Id of a shape on the board, either tldraw-assigned (shape:abc) or one you assigned earlier."
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "shapeId": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 64,
+                            "description": "Id of a shape on the board, either tldraw-assigned (shape:abc) or one you assigned earlier."
+                          },
+                          "sub": {
+                            "type": "string",
+                            "description": "Sub-target inside a composite shape, e.g. 'term:3' for the 4th term of an EquationShape or 'line:2' for a StepsShape line."
+                          }
+                        },
+                        "required": [
+                          "shapeId",
+                          "sub"
+                        ],
+                        "additionalProperties": false
+                      }
+                    ]
+                  },
+                  "color": {
+                    "default": "yellow",
+                    "type": "string",
+                    "enum": [
+                      "yellow",
+                      "green",
+                      "blue",
+                      "red",
+                      "violet",
+                      "orange",
+                      "grey"
+                    ],
+                    "description": "Semantic highlight color; the client maps it to the active board theme."
+                  }
+                },
+                "required": [
+                  "type",
+                  "target"
+                ]
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "const": "write_steps"
+                  },
+                  "x": {
+                    "type": "number",
+                    "description": "Horizontal offset from the current section's left edge, 0-800."
+                  },
+                  "y": {
+                    "type": "number",
+                    "description": "Vertical offset from the current section's top edge, 0-600."
+                  },
+                  "id": {
+                    "type": "string",
+                    "pattern": "^[a-z][a-z0-9_]{0,47}$",
+                    "description": "Stable id you assign to this shape so you can reference it in later actions, e.g. 'eq_quadratic' or 'sim_collision'."
+                  },
+                  "lines": {
+                    "minItems": 1,
+                    "maxItems": 12,
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "Worked-problem lines, one per step. Keep each under ~80 characters."
+                  },
+                  "reveal": {
+                    "default": "one_by_one",
+                    "description": "'one_by_one' reveals lines as you narrate them; use it for anything you're explaining.",
+                    "type": "string",
+                    "enum": [
+                      "one_by_one",
+                      "all"
+                    ]
+                  }
+                },
+                "required": [
+                  "type",
+                  "x",
+                  "y",
+                  "id",
+                  "lines"
+                ]
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "const": "equation"
+                  },
+                  "x": {
+                    "type": "number",
+                    "description": "Horizontal offset from the current section's left edge, 0-800."
+                  },
+                  "y": {
+                    "type": "number",
+                    "description": "Vertical offset from the current section's top edge, 0-600."
+                  },
+                  "id": {
+                    "type": "string",
+                    "pattern": "^[a-z][a-z0-9_]{0,47}$",
+                    "description": "Stable id you assign to this shape so you can reference it in later actions, e.g. 'eq_quadratic' or 'sim_collision'."
+                  },
+                  "latex": {
+                    "type": "string",
+                    "description": "KaTeX-compatible LaTeX, without surrounding $ delimiters."
+                  }
+                },
+                "required": [
+                  "type",
+                  "x",
+                  "y",
+                  "id",
+                  "latex"
+                ]
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "const": "graph"
+                  },
+                  "x": {
+                    "type": "number",
+                    "description": "Horizontal offset from the current section's left edge, 0-800."
+                  },
+                  "y": {
+                    "type": "number",
+                    "description": "Vertical offset from the current section's top edge, 0-600."
+                  },
+                  "id": {
+                    "type": "string",
+                    "pattern": "^[a-z][a-z0-9_]{0,47}$",
+                    "description": "Stable id you assign to this shape so you can reference it in later actions, e.g. 'eq_quadratic' or 'sim_collision'."
+                  },
+                  "spec": {
+                    "type": "object",
+                    "properties": {
+                      "xRange": {
+                        "default": [
+                          -10,
+                          10
+                        ],
+                        "type": "array",
+                        "prefixItems": [
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "type": "number"
+                          }
+                        ]
+                      },
+                      "yRange": {
+                        "default": [
+                          -10,
+                          10
+                        ],
+                        "type": "array",
+                        "prefixItems": [
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "type": "number"
+                          }
+                        ]
+                      },
+                      "functions": {
+                        "maxItems": 6,
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "expr": {
+                              "type": "string",
+                              "description": "Function of x in plain math syntax, e.g. 'x^2 - 4*x + 3' or 'sin(x)/x'."
+                            },
+                            "label": {
+                              "type": "string"
+                            },
+                            "color": {
+                              "type": "string"
+                            },
+                            "domain": {
+                              "type": "array",
+                              "prefixItems": [
+                                {
+                                  "type": "number"
+                                },
+                                {
+                                  "type": "number"
+                                }
+                              ]
+                            }
+                          },
+                          "required": [
+                            "expr"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "points": {
+                        "maxItems": 24,
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "x": {
+                              "type": "number"
+                            },
+                            "y": {
+                              "type": "number"
+                            },
+                            "label": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "x",
+                            "y"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "tangents": {
+                        "maxItems": 6,
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "fnIndex": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            "at": {
+                              "type": "number",
+                              "description": "x value at which to draw the tangent line."
+                            },
+                            "label": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "fnIndex",
+                            "at"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "shaded": {
+                        "maxItems": 6,
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "fnIndex": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            "from": {
+                              "type": "number"
+                            },
+                            "to": {
+                              "type": "number"
+                            },
+                            "label": {
+                              "description": "e.g. 'area = 4.5'",
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "fnIndex",
+                            "from",
+                            "to"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "parameters": {
+                        "maxItems": 4,
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "name": {
+                              "type": "string",
+                              "description": "Symbol usable inside function expressions, e.g. 'a'."
+                            },
+                            "value": {
+                              "type": "number"
+                            },
+                            "min": {
+                              "type": "number"
+                            },
+                            "max": {
+                              "type": "number"
+                            },
+                            "step": {
+                              "type": "number",
+                              "exclusiveMinimum": 0
+                            }
+                          },
+                          "required": [
+                            "name",
+                            "value",
+                            "min",
+                            "max"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "showGrid": {
+                        "type": "boolean"
+                      },
+                      "xLabel": {
+                        "type": "string"
+                      },
+                      "yLabel": {
+                        "type": "string"
+                      }
+                    },
+                    "additionalProperties": false
+                  }
+                },
+                "required": [
+                  "type",
+                  "x",
+                  "y",
+                  "id",
+                  "spec"
+                ]
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "const": "spawn_sim"
+                  },
+                  "x": {
+                    "type": "number",
+                    "description": "Horizontal offset from the current section's left edge, 0-800."
+                  },
+                  "y": {
+                    "type": "number",
+                    "description": "Vertical offset from the current section's top edge, 0-600."
+                  },
+                  "id": {
+                    "type": "string",
+                    "pattern": "^[a-z][a-z0-9_]{0,47}$",
+                    "description": "Stable id you assign to this shape so you can reference it in later actions, e.g. 'eq_quadratic' or 'sim_collision'."
+                  },
+                  "spec": {
+                    "type": "object",
+                    "properties": {
+                      "template": {
+                        "type": "string",
+                        "enum": [
+                          "collision_2body",
+                          "projectile",
+                          "inclined_plane",
+                          "pendulum",
+                          "distribution_sampler",
+                          "function_explorer",
+                          "timeline",
+                          "labeled_diagram",
+                          "annotated_map",
+                          "flow_diagram",
+                          "p5_sketch"
+                        ]
+                      },
+                      "theme": {
+                        "type": "string",
+                        "description": "Interest-taxonomy key that resolves sprites, e.g. 'basketball'. Must come from the learner's interest profile — never free text."
+                      },
+                      "objects": {
+                        "minItems": 1,
+                        "maxItems": 12,
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "sprite": {
+                              "type": "string",
+                              "description": "Sprite key resolved against the learner's themed asset pack, falling back to a built-in procedural sprite."
+                            },
+                            "label": {
+                              "description": "Label rendered next to the object, e.g. 'Ball A'.",
+                              "type": "string"
+                            },
+                            "mass": {
+                              "type": "number",
+                              "exclusiveMinimum": 0
+                            },
+                            "v": {
+                              "description": "Initial velocity along the template's primary axis.",
+                              "type": "number"
+                            }
+                          },
+                          "required": [
+                            "sprite"
+                          ],
+                          "additionalProperties": {}
+                        }
+                      },
+                      "params": {
+                        "description": "Template-specific parameters, e.g. { restitution: 0.85 }.",
+                        "type": "object",
+                        "propertyNames": {
+                          "type": "string"
+                        },
+                        "additionalProperties": {
+                          "anyOf": [
+                            {
+                              "type": "number"
+                            },
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "boolean"
+                            }
+                          ]
+                        }
+                      },
+                      "overlays": {
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "enum": [
+                            "force_vectors",
+                            "velocity_vectors",
+                            "momentum_hud",
+                            "energy_hud",
+                            "slowmo_at_impact",
+                            "trace_path",
+                            "grid"
+                          ],
+                          "description": "Visual overlay computed from the simulation state, not drawn by hand."
+                        }
+                      },
+                      "beats": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "at": {
+                              "type": "string",
+                              "description": "Named engine event to fire on, e.g. 'impact', 'apex', 'rest'. Template-specific."
+                            },
+                            "say": {
+                              "type": "string",
+                              "description": "Narration text to speak when this event fires."
+                            }
+                          },
+                          "required": [
+                            "at",
+                            "say"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "seed": {
+                        "description": "Seed for any randomness. Required for reproducible replay; the client supplies one if omitted.",
+                        "type": "integer",
+                        "minimum": -9007199254740991,
+                        "maximum": 9007199254740991
+                      }
+                    },
+                    "required": [
+                      "template",
+                      "theme",
+                      "objects"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "required": [
+                  "type",
+                  "x",
+                  "y",
+                  "id",
+                  "spec"
+                ]
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "const": "sim_control"
+                  },
+                  "id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64,
+                    "description": "Id of a simulation you created with spawn_sim."
+                  },
+                  "op": {
+                    "type": "string",
+                    "enum": [
+                      "play",
+                      "pause",
+                      "replay",
+                      "speed"
+                    ]
+                  },
+                  "value": {
+                    "description": "Playback rate; required when op is 'speed' (1 = realtime, 0.25 = slow motion).",
+                    "type": "number",
+                    "exclusiveMinimum": 0
+                  }
+                },
+                "required": [
+                  "type",
+                  "id",
+                  "op"
+                ]
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "const": "sim_update"
+                  },
+                  "id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64,
+                    "description": "Id of a shape on the board, either tldraw-assigned (shape:abc) or one you assigned earlier."
+                  },
+                  "param": {
+                    "type": "string",
+                    "description": "Parameter name from the simulation's spec.params."
+                  },
+                  "value": {
+                    "anyOf": [
+                      {
+                        "type": "number"
+                      },
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "boolean"
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "type",
+                  "id",
+                  "param",
+                  "value"
+                ]
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "const": "show_source"
+                  },
+                  "x": {
+                    "type": "number",
+                    "description": "Horizontal offset from the current section's left edge, 0-800."
+                  },
+                  "y": {
+                    "type": "number",
+                    "description": "Vertical offset from the current section's top edge, 0-600."
+                  },
+                  "id": {
+                    "type": "string",
+                    "pattern": "^[a-z][a-z0-9_]{0,47}$",
+                    "description": "Stable id you assign to this shape so you can reference it in later actions, e.g. 'eq_quadratic' or 'sim_collision'."
+                  },
+                  "source": {
+                    "anyOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "chunkId": {
+                            "type": "string",
+                            "description": "Id of a chunk already in the retrieval index."
+                          }
+                        },
+                        "required": [
+                          "chunkId"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "mergeFileRef": {
+                            "type": "object",
+                            "properties": {
+                              "linkedAccountId": {
+                                "type": "string"
+                              },
+                              "remoteId": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "linkedAccountId",
+                              "remoteId"
+                            ],
+                            "additionalProperties": false,
+                            "description": "A file the action plane fetched that is not yet indexed."
+                          }
+                        },
+                        "required": [
+                          "mergeFileRef"
+                        ],
+                        "additionalProperties": false
+                      }
+                    ]
+                  },
+                  "region": {
+                    "description": "Crop within the source document, if only part is relevant.",
+                    "type": "object",
+                    "properties": {
+                      "x": {
+                        "type": "number"
+                      },
+                      "y": {
+                        "type": "number"
+                      },
+                      "w": {
+                        "type": "number",
+                        "exclusiveMinimum": 0
+                      },
+                      "h": {
+                        "type": "number",
+                        "exclusiveMinimum": 0
+                      }
+                    },
+                    "required": [
+                      "x",
+                      "y",
+                      "w",
+                      "h"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "required": [
+                  "type",
+                  "x",
+                  "y",
+                  "id",
+                  "source"
+                ]
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "const": "new_section"
+                  },
+                  "title": {
+                    "type": "string",
+                    "maxLength": 80,
+                    "description": "Heading for the new section, e.g. 'Part 2: the derivative'."
+                  }
+                },
+                "required": [
+                  "type",
+                  "title"
+                ]
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "const": "clear_region"
+                  },
+                  "bounds": {
+                    "type": "object",
+                    "properties": {
+                      "x": {
+                        "type": "number"
+                      },
+                      "y": {
+                        "type": "number"
+                      },
+                      "w": {
+                        "type": "number",
+                        "exclusiveMinimum": 0
+                      },
+                      "h": {
+                        "type": "number",
+                        "exclusiveMinimum": 0
+                      }
+                    },
+                    "required": [
+                      "x",
+                      "y",
+                      "w",
+                      "h"
+                    ],
+                    "additionalProperties": false,
+                    "description": "A rectangle relative to the current section's origin."
+                  }
+                },
+                "required": [
+                  "type",
+                  "bounds"
+                ]
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "const": "camera"
+                  },
+                  "op": {
+                    "type": "string",
+                    "const": "focus"
+                  },
+                  "target": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 64,
+                        "description": "Id of a shape on the board, either tldraw-assigned (shape:abc) or one you assigned earlier."
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "x": {
+                            "type": "number"
+                          },
+                          "y": {
+                            "type": "number"
+                          },
+                          "w": {
+                            "type": "number",
+                            "exclusiveMinimum": 0
+                          },
+                          "h": {
+                            "type": "number",
+                            "exclusiveMinimum": 0
+                          }
+                        },
+                        "required": [
+                          "x",
+                          "y",
+                          "w",
+                          "h"
+                        ],
+                        "additionalProperties": false,
+                        "description": "A rectangle relative to the current section's origin."
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "type",
+                  "op",
+                  "target"
+                ]
+              }
+            ]
+          }
+        },
+        "required": [
+          "type",
+          "turnId",
+          "seq",
+          "cueMs",
+          "action"
+        ],
+        "additionalProperties": false
+      },
+      {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "cancel_turn"
+          },
+          "turnId": {
+            "type": "string",
+            "pattern": "^t_\\d{4,}$"
+          },
+          "reason": {
+            "type": "string",
+            "enum": [
+              "barge_in",
+              "error",
+              "session_end"
+            ]
+          }
+        },
+        "required": [
+          "type",
+          "turnId",
+          "reason"
+        ],
+        "additionalProperties": false
+      }
+    ]
+  },
+  "clientMessage": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "oneOf": [
+      {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "student_event"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "drew",
+              "selected",
+              "moved",
+              "sim_param_changed",
+              "dropped_image"
+            ]
+          },
+          "shapeIds": {
+            "default": [],
+            "maxItems": 64,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64,
+              "description": "Id of a shape on the board, either tldraw-assigned (shape:abc) or one you assigned earlier."
+            }
+          },
+          "detail": {
+            "default": {},
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {}
+          },
+          "needsScreenshot": {
+            "default": false,
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "type",
+          "kind"
+        ],
+        "additionalProperties": false
+      },
+      {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "client_hello"
+          },
+          "protocolVersion": {
+            "type": "string"
+          },
+          "supportedActions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "type",
+          "protocolVersion",
+          "supportedActions"
+        ],
+        "additionalProperties": false
+      }
+    ]
+  }
+}

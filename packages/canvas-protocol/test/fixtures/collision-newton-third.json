@@ -1,0 +1,101 @@
+{
+  "name": "collision-newton-third",
+  "description": "The README's canonical demo: Newton's third law via colliding basketballs, with narration beats fired from engine events and a slow-motion replay at impact. Ends with a student event changing a slider.",
+  "messages": [
+    {
+      "type": "canvas_action",
+      "turnId": "t_0042",
+      "seq": 0,
+      "cueMs": 0,
+      "action": { "type": "new_section", "title": "Newton's third law" }
+    },
+    {
+      "type": "canvas_action",
+      "turnId": "t_0042",
+      "seq": 1,
+      "cueMs": 1850,
+      "action": {
+        "type": "spawn_sim",
+        "x": 100,
+        "y": 80,
+        "id": "sim_collision",
+        "spec": {
+          "template": "collision_2body",
+          "theme": "basketball",
+          "seed": 7,
+          "objects": [
+            { "sprite": "basketball", "label": "Ball A", "mass": 0.62, "v": 4.2 },
+            { "sprite": "basketball", "label": "Ball B", "mass": 0.62, "v": 0 }
+          ],
+          "params": { "restitution": 0.85 },
+          "overlays": ["force_vectors", "slowmo_at_impact", "momentum_hud"],
+          "beats": [
+            {
+              "at": "impact",
+              "say": "Right here — watch both arrows appear at the same instant, same length, pointing opposite ways."
+            },
+            { "at": "rest", "say": "Ball A slowed by exactly as much as Ball B sped up." }
+          ]
+        }
+      }
+    },
+    {
+      "type": "canvas_action",
+      "turnId": "t_0042",
+      "seq": 2,
+      "cueMs": 4300,
+      "action": { "type": "sim_control", "id": "sim_collision", "op": "play" }
+    },
+    {
+      "type": "canvas_action",
+      "turnId": "t_0042",
+      "seq": 3,
+      "cueMs": 6100,
+      "action": { "type": "sim_control", "id": "sim_collision", "op": "speed", "value": 0.25 }
+    },
+    {
+      "type": "canvas_action",
+      "turnId": "t_0042",
+      "seq": 4,
+      "cueMs": 9750,
+      "action": {
+        "type": "equation",
+        "x": 100,
+        "y": 420,
+        "id": "eq_third_law",
+        "latex": "\\vec{F}_{AB} = -\\vec{F}_{BA}"
+      }
+    },
+    {
+      "type": "student_event",
+      "kind": "sim_param_changed",
+      "shapeIds": ["sim_collision"],
+      "detail": { "param": "restitution", "from": 0.85, "to": 0.3 },
+      "needsScreenshot": false
+    },
+    {
+      "type": "cancel_turn",
+      "turnId": "t_0042",
+      "reason": "barge_in"
+    },
+    {
+      "type": "canvas_action",
+      "turnId": "t_0043",
+      "seq": 0,
+      "cueMs": 0,
+      "action": {
+        "type": "sim_update",
+        "id": "sim_collision",
+        "param": "restitution",
+        "value": 0.3
+      }
+    },
+    {
+      "type": "canvas_action",
+      "turnId": "t_0043",
+      "seq": 1,
+      "cueMs": 900,
+      "action": { "type": "sim_control", "id": "sim_collision", "op": "replay" }
+    }
+  ]
+}
