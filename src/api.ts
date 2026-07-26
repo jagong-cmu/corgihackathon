@@ -56,7 +56,10 @@ export async function askTutor(
   } catch {
     return clientMockTurn(userQuery);
   }
-  if (res.status === 404) return clientMockTurn(userQuery);
+  // No backend on this host (static hosting like GitHub Pages): a POST to a
+  // path that only serves static files returns 404 (not found) or 405 (method
+  // not allowed). Either way, fall back to the client-side mock.
+  if (res.status === 404 || res.status === 405) return clientMockTurn(userQuery);
   if (!res.ok) {
     const detail = await res.json().catch(() => ({}));
     throw new Error(detail.error ?? `request failed (${res.status})`);
