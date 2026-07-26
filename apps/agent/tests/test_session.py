@@ -173,6 +173,94 @@ class TestBargeIn:
         assert adapter.cancellations[-1] == ("t_0001", "barge_in")
         assert len(adapter.frames) == frames_before
 
+    async def test_barge_in_stops_audio_not_only_cues(self):
+        """Cancelling cues stops the arrows; audio is already in the transport.
+
+        Stopping one without the other is the worst outcome: the board freezes
+        and the tutor keeps talking over the learner.
+        """
+        session, adapter = _session([ScriptedTurn(events=["Talking at length. "])])
+        await session.handle_transcript("go")
+
+        await session.barge_in()
+
+        assert adapter.audio_stops == 1
+
+    async def test_barge_in_interrupts_the_avatar(self):
+        avatar = FakeAvatar()
+        session, _ = _session([ScriptedTurn(events=["Talking. "])], avatar=avatar)
+        await session.handle_transcript("go")
+
+        await session.barge_in()
+
+        assert avatar.interrupted == 1
+
+    async def test_a_superseding_turn_also_stops_audio(self):
+        """The fast-follow-up path must behave like an explicit barge-in."""
+        avatar = FakeAvatar()
+        session, adapter = _session(
+            [
+                ScriptedTurn(events=["First. "]),
+                ScriptedTurn(events=["Second. "]),
+            ],
+            avatar=avatar,
+        )
+        await session.handle_transcript("first")
+        await session.handle_transcript("second")
+
+        assert adapter.audio_stops == 1
+        assert avatar.interrupted == 1
+
+    async def test_barge_in_with_no_active_turn_is_a_noop(self):
+        session, adapter = _session([])
+        await session.barge_in()
+        assert adapter.audio_stops == 0
+        assert adapter.cancellations == []
+
+    async def test_interrupting_is_not_the_same_as_pausing(self):
+        """pause() is the per-minute cost lever and must not fire on barge-in."""
+        avatar = FakeAvatar()
+        session, _ = _session([ScriptedTurn(events=["Talking. "])], avatar=avatar)
+        await session.handle_transcript("go")
+
+        await session.barge_in()
+
+        assert avatar.paused == 0
+
+
+class TestAudioLifecycle:
+    async def test_end_of_turn_flushes_the_buffered_tail(self):
+        """Adapters hold back a sub-frame remainder; the turn's end releases it."""
+        session, adapter = _session([ScriptedTurn(events=["All done."])])
+        await session.handle_transcript("go")
+        assert adapter.audio_flushes == 1
+
+    async def test_text_channels_are_never_asked_to_flush(self):
+        adapter = RecordingAdapter(channel_kind=Channel.SMS, caps=ChannelCapabilities.messaging())
+        session, adapter = _session([ScriptedTurn(events=["All done."])], adapter=adapter)
+        await session.handle_transcript("go")
+        assert adapter.audio_flushes == 0
+
+    async def test_a_turn_interrupted_mid_stream_does_not_flush(self):
+        """Flushing after an interruption would emit the fragment we just dropped."""
+        session, adapter = _session(
+            [ScriptedTurn(events=["First sentence. ", "Second sentence. "])]
+        )
+
+        # Barge in from inside TTS, i.e. while the turn is still streaming.
+        real_synthesize = session.tts.synthesize
+
+        async def interrupt_then_synthesize(text: str, **kwargs):
+            await session.barge_in()
+            return await real_synthesize(text, **kwargs)
+
+        session.tts.synthesize = interrupt_then_synthesize
+
+        result = await session.handle_transcript("go")
+
+        assert result.cancelled
+        assert adapter.audio_flushes == 0
+
 
 class TestChannelAgnosticism:
     async def test_text_channel_skips_tts_and_fires_all_cues_at_zero(self):

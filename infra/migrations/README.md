@@ -39,8 +39,22 @@ transaction with its ledger row.
 | 0008 | canvas_snapshots | tldraw store snapshots |
 | 0009 | sim_specs | analogy-engine specs + seeds, for deterministic replay |
 | 0010 | event_log | append-only ops/product events |
+| 0011 | content_sources | `merge_linked_accounts` (sync plane) + `uploads` (direct) |
+| 0012 | doc_chunks | the retrieval index: pgvector + query-time ACLs |
 
-Next free number: **0011**. Phase 4/5 tables (`doc_chunks`,
-`merge_linked_accounts`, `tool_call_log`, `study_tasks`, `channel_identities`,
-`asset_packs`) are deliberately not built yet — see `../README.md` for what each
-will need.
+Next free number: **0013**. Still unbuilt: `tool_call_log`, `study_tasks`,
+`channel_identities`, `asset_packs` — see `../README.md` for what each will need.
+
+## Two traps 0012 hit, recorded so the next one doesn't
+
+**A generated column must be IMMUTABLE, and casting text to an enum is not.**
+`acl_mode` was `chunk_acl_mode GENERATED ALWAYS AS ((acl ->> 'mode')::chunk_acl_mode)`
+and Postgres rejected it with `generation expression is not immutable` — enum
+labels can be renamed, so the cast is only STABLE. It is a plain `text` column
+with a named CHECK instead. Prefer the enum everywhere else; it cannot work here.
+
+**Numbering collides silently across branches.** The ledger keys on the numeric
+prefix, so two branches that both add an `0011_` leave whichever applied first
+recorded as "0011" and the other permanently skipped — `status` will even print
+your filename against their applied row. Check `SELECT name FROM
+schema_migrations` against a shared database before picking a number.

@@ -119,16 +119,95 @@ client, and `TutorSession` stays free of Anthropic-shaped plumbing.
 Merge Agent Handler tools (Phase 5) must **not** be acked this way. They leave
 our infrastructure, can exceed a second, and must be narration-covered (§7.3).
 
+## Going live
+
+Everything above runs offline. The live loop adds four vendors and a room, and
+the failure modes there are not the ones the fakes produce — an in-memory
+adapter accepts any byte string, so the suite passed for a long time with a
+`send_audio` that would raise on the first odd-length chunk ElevenLabs sent.
+
+Check every leg before spending a session debugging one:
+
+```bash
+set -a && . ../../.env.local && set +a
+uv run python scripts/preflight.py        # ~1 cent, exits non-zero if not ready
+uv run python -m tutor_agent.adapters.worker dev
+```
+
+Preflight walks the loop in the order it runs: env (including "is this still the
+`livekit-server --dev` placeholder key"), persona, a real Claude turn with the
+real tool definitions attached, a real TTS stream checked for character
+alignment and plausible duration, the STT constructor and its VAD budget, an
+actual LiveKit connect + publish + data-channel round trip, the avatar vendor
+handshake, and the retrieval index. WARN means degraded but usable; FAIL means
+don't start.
+
+Set `TUTOR_METRICS_PATH=run.jsonl` and every turn appends its own latency
+breakdown — STT finalization, model-to-first-audio, and the total against the
+1200ms budget, separated so a regression points at a subsystem.
+
+### Barge-in is audio, not just cues
+
+`cancel_turn` stops canvas actions, which the client controls. Audio has already
+left for the transport's playout buffer and the avatar's queue, so `barge_in()`
+also calls `channel.stop_audio()` and `avatar.interrupt()`. Skipping that half
+produces the worst version of the feature: the board freezes and the tutor keeps
+talking over the learner.
+
+`interrupt()` and `pause()` are separate methods on `AvatarProvider` on purpose.
+The first is latency-critical and fires on every barge-in; the second is the
+per-minute cost lever. Conflating them means one of the two is always wrong.
+
+## Retrieval (§7.1, the sync plane)
+
+`RetrievalProvider.search` takes a `Principal`, not a bare `user_id`:
+
+```python
+Principal(user_id="...", groups=frozenset({"g:cs101"}))
+```
+
+That is what makes §13's "enforce ACLs at retrieval time, never at ingestion
+time only" implementable. Ownership is necessary and never sufficient; a chunk
+in `principals` mode must overlap the requester's groups, so an empty group set
+matches nothing rather than everything. The filter lives in one place —
+`_SEARCH_SQL` in `retrieval/pgvector.py` — and `test_retrieval_pg.py` proves it
+by deleting a group and asserting the chunk stops matching on the *next query*,
+with no resync.
+
+```bash
+uv sync --extra postgres --extra embeddings
+cd ../../infra && make up && cd -
+export DATABASE_URL=postgres://tutor:tutor@localhost:5432/tutor
+
+uv run tutor chunk notes.md                              # no database needed
+uv run tutor ingest notes.md --user <uuid> --upload <uuid>
+uv run tutor ask "what's on the midterm" --user <uuid>   # prints the 150ms budget
+```
+
+Embeddings default to `HashingEmbeddings`, which is lexical rather than
+semantic — enough that a test asserting "the syllabus chunk ranks first" is
+testing something, and enough for a local demo. Set `VOYAGE_API_KEY` for real
+retrieval. `EMBEDDING_DIM` mirrors `vector(1024)` in migration 0012; changing
+the embedding model is a reindex, not a config flip, and preflight checks the
+two agree.
+
+The integration tests need a database and are skipped without one:
+
+```bash
+TUTOR_TEST_DATABASE_URL=$DATABASE_URL uv run pytest tests/test_retrieval_pg.py
+```
+
 ## Not built yet
 
-- `adapters/realtime.py` — the LiveKit worker. Needs keys to be worth writing.
-- LemonSlice avatar adapter — goes behind `AvatarProvider` via the LiveKit
-  plugin. `FakeAvatar` already exercises the lifecycle, including `pause()`,
-  which matters because avatars bill per active minute.
+- Merge itself. The sync plane's *storage and query* half is built —
+  `merge_linked_accounts`, provenance, purge-on-sever — but nothing calls Merge:
+  no Link onboarding, no webhook consumers, no delta handling. `tutor ingest`
+  stands in for the ingestion worker.
+- Merge Agent Handler (§7.2, the action plane). Deliberately not behind
+  `RetrievalProvider` — it is slow, governed, and narration-covered, and putting
+  the two behind one interface is how the fast path ends up awaiting the slow
+  one.
 - Consent capture flow — the spec enforces the invariant; nothing records a
   consent session yet.
-- ACL enforcement at retrieval time. §13 requires filtering on
-  `doc_chunks.acl` at query time, not only at ingestion — otherwise an upstream
-  permission revocation doesn't take effect until the next re-sync. The
-  `RetrievalProvider` protocol has no ACL parameter yet; add one before the
-  first real pgvector implementation.
+- `show_source` has a schema and no renderer, because there is no canvas client
+  in this tree yet.

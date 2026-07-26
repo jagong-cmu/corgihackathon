@@ -132,18 +132,28 @@ class StreamingTTSProvider(Protocol):
 
 @runtime_checkable
 class AvatarProvider(Protocol):
-    """Renders a talking face from an audio stream and publishes video.
-
-    Providers bill per active minute (~$0.10-0.37), so `pause` is not an
-    optimization — leaving the stream hot while the learner works alone on the
-    board is a direct cost leak (§14 cheat sheet).
-    """
+    """Renders a talking face from an audio stream and publishes video."""
 
     async def start(self, *, avatar_ref: str) -> None: ...
 
     async def push_audio(self, audio: bytes) -> None: ...
 
-    async def pause(self) -> None: ...
+    async def interrupt(self) -> None:
+        """Drop queued audio the learner has interrupted.
+
+        Distinct from `pause` on purpose. This one is latency-critical and fires
+        on every barge-in: without it the face keeps lip-syncing a sentence the
+        learner already talked over.
+        """
+
+    async def pause(self) -> None:
+        """Stand the stream down while the learner works solo on the board.
+
+        Providers bill per active minute (~$0.10-0.37), so this is a cost lever,
+        not an optimization (§14 cheat sheet). Note that clearing the audio
+        buffer alone does not stop the meter — a provider that bills for an idle
+        session must end it in `stop` and re-`start` later.
+        """
 
     async def stop(self) -> None: ...
 
@@ -159,10 +169,38 @@ class Chunk:
     text: str
     uri: str
     score: float
+    title: str | None = None
+
+
+@dataclass(frozen=True)
+class Principal:
+    """Who is asking, for ACL enforcement at query time (§13).
+
+    Two fields because two things grant access. `user_id` is ownership: your own
+    uploads. `groups` are the identities the upstream source knows you by —
+    Merge's ACL model records permissions against provider-side users and groups,
+    so a chunk from a shared Drive folder is readable by whoever holds one of
+    those, which is not necessarily the row's owner.
+
+    Passing this rather than a bare user_id is deliberate. §13 requires filtering
+    on `doc_chunks.acl` at *query* time, not only at ingestion, because a
+    permission revoked upstream must take effect on the next question rather than
+    the next resync. A signature with nowhere to put the requester's groups
+    quietly makes that impossible, which is how ingestion-time-only filtering
+    happens by accident.
+    """
+
+    user_id: str
+    groups: frozenset[str] = frozenset()
+
+    @staticmethod
+    def owner(user_id: str) -> Principal:
+        """The common case: the learner reading their own materials."""
+        return Principal(user_id=user_id)
 
 
 @runtime_checkable
 class RetrievalProvider(Protocol):
     """pgvector for MVP, Moss later. Must stay under ~150ms in-loop (§4)."""
 
-    async def search(self, query: str, *, user_id: str, limit: int = 5) -> list[Chunk]: ...
+    async def search(self, query: str, *, principal: Principal, limit: int = 5) -> list[Chunk]: ...

@@ -25,6 +25,7 @@ from ..persona import PersonaSpec, build_few_shot_messages, build_system_prompt
 from ..providers.base import (
     AvatarProvider,
     LLMProvider,
+    Principal,
     RetrievalProvider,
     StreamingTTSProvider,
     TextDelta,
@@ -101,6 +102,7 @@ class TutorSession:
         retrieval: RetrievalProvider | None = None,
         config: SessionConfig | None = None,
         user_id: str = "dev",
+        principal: Principal | None = None,
     ) -> None:
         self.persona = persona
         self.llm = llm
@@ -110,6 +112,12 @@ class TutorSession:
         self.retrieval = retrieval
         self.config = config or SessionConfig()
         self.user_id = user_id
+
+        # Carried for the whole session and handed to every search. §13 wants
+        # ACLs enforced per query, so the requester's identity has to survive
+        # from session setup down to the SQL — defaulting to owner-only keeps
+        # the fallback fail-closed.
+        self.principal = principal or Principal.owner(user_id)
 
         self._history: list[dict[str, Any]] = []
         self._turn_counter = 0
@@ -131,7 +139,7 @@ class TutorSession:
         if self.retrieval is None:
             return None
         chunks = await self.retrieval.search(
-            query, user_id=self.user_id, limit=self.config.retrieval_limit
+            query, principal=self.principal, limit=self.config.retrieval_limit
         )
         if not chunks:
             return None
@@ -152,8 +160,9 @@ class TutorSession:
         turn_id = self._next_turn_id()
         superseded = self._cues.begin_turn(turn_id)
         if superseded is not None:
-            # Barge-in: the previous turn's unfired cues are dead (§4).
-            await self.channel.cancel_turn(superseded, "barge_in")
+            # A new turn started while the last one was still in flight. Its
+            # unfired cues are dead (§4) and so is its audio.
+            await self._interrupt_output(superseded, "barge_in")
 
         context = await self._retrieve(transcript)
         messages = self._build_messages(transcript, context)
@@ -239,6 +248,10 @@ class TutorSession:
         # Anything anchored past the end of speech fires at the end of audio.
         await self._emit(turn_id, timeline.resolve_remaining())
 
+        # Speech is done, so release the sub-frame tail the adapter is holding.
+        if streams_audio:
+            await self.channel.flush_audio()
+
         speech = timeline.speech_text
         self._history.append({"role": "user", "content": transcript})
         if speech.strip():
@@ -320,12 +333,27 @@ class TutorSession:
     # -- lifecycle ----------------------------------------------------------
 
     async def barge_in(self) -> None:
-        """The learner started talking. Kill the current turn's unfired cues."""
+        """The learner started talking. Kill the current turn's output."""
         turn_id = self._cues.active_turn_id
         if turn_id is None:
             return
         self._cues.cancel(turn_id)
-        await self.channel.cancel_turn(turn_id, "barge_in")
+        await self._interrupt_output(turn_id, "barge_in")
+
+    async def _interrupt_output(self, turn_id: str, reason: str) -> None:
+        """Stop everything the learner can currently see or hear.
+
+        Audio first, deliberately. Cancelling the turn only stops canvas
+        actions; audio already sits in the transport's playout buffer and in the
+        avatar's queue, and those are what the learner notices. Stopping cues
+        but not audio produces the worst version of this: the arrows freeze and
+        the tutor talks on over the interruption.
+        """
+        if self.channel.capabilities.streams_audio:
+            await self.channel.stop_audio()
+        if self.avatar is not None:
+            await self.avatar.interrupt()
+        await self.channel.cancel_turn(turn_id, reason)
 
     async def pause_avatar(self) -> None:
         """Call when the learner is working solo on the board.
