@@ -40,9 +40,11 @@ npm run test:tutors  # tutor roster guardrails: client fallback ↔ served libra
 ```
 
 More docs: the live voice session (LiveKit, agent worker, avatars, deploys)
-is covered in [LIVE_TUTOR.md](LIVE_TUTOR.md); the Postgres schema and
+is covered in [LIVE_TUTOR.md](LIVE_TUTOR.md); the agent worker's internals
+(personas, cue timing, providers, going live) in
+[apps/agent/README.md](apps/agent/README.md); the Postgres schema and
 migrations in [infra/README.md](infra/README.md); releases in
-[CHANGELOG.md](CHANGELOG.md).
+[CHANGELOG.md](CHANGELOG.md); deferred work in [TODOS.md](TODOS.md).
 
 ## Build order / phase status
 

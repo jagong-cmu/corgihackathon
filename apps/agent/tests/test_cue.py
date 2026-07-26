@@ -88,6 +88,26 @@ class TestAnchoring:
         # reveal_step keeps its narration anchor.
         assert reveal.cue_ms > 0
 
+    def test_only_the_first_present_visual_anchors_to_turn_start(self):
+        # A replacement board mid-turn anchored at 0 would sort BEFORE the
+        # first board's reveals in resolve() and fire instantly on the live
+        # path, clobbering the board the narration still points at.
+        timeline = TurnTimeline("t_0001")
+        timeline.add_text("Here's the first board. ")
+        timeline.add_action({"type": "present_visual", "spec": {"specVersion": 1}})
+        timeline.add_text("Now watch this step. ")
+        timeline.add_action({"type": "reveal_step", "stepId": "s1"})
+        timeline.add_text("Actually, let's start over with a cleaner picture. ")
+        timeline.add_action({"type": "present_visual", "spec": {"specVersion": 1}})
+        timeline.attach_timings(synthetic_timings(timeline.speech_text))
+
+        first, reveal, second = timeline.resolve()
+        assert first.action["type"] == "present_visual" and first.cue_ms == 0
+        assert reveal.action["type"] == "reveal_step"
+        # The replacement anchors to its narration, AFTER the reveal.
+        assert second.action["type"] == "present_visual"
+        assert second.cue_ms >= reveal.cue_ms
+
     def test_present_visual_emits_with_first_synthesized_segment(self):
         # Sentence-at-a-time synthesis: the board frame must go out with the
         # first segment, not wait for its narration anchor to be covered.

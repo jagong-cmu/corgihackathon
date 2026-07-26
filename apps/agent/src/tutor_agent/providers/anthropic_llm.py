@@ -27,6 +27,33 @@ from .base import StreamEvent, TextDelta, ToolCall, TurnEnd
 _STUB_RESULT = json.dumps({"ok": True})
 
 
+def _cache_marked(messages: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Copy of `messages` with a cache breakpoint on the final content block.
+
+    The system prompt was already cached, but the conversation was not: every
+    turn re-processed the few-shot block and the whole history, and every tool
+    round within a turn re-processed the entire prompt again — for a whiteboard
+    lesson that is 6-9 full re-reads, each one a pause the learner hears.
+    Marking the newest message makes this request's prefix the next request's
+    cache hit, both round-to-round and turn-to-turn.
+
+    A copy, not a mutation: the caller reuses these dicts across rounds and
+    turns, and a mark left behind would pile up breakpoints past the API's
+    limit of four.
+    """
+    if not messages:
+        return []
+    last = dict(messages[-1])
+    content = last["content"]
+    if isinstance(content, str):
+        blocks: list[dict[str, Any]] = [{"type": "text", "text": content}]
+    else:
+        blocks = [dict(block) for block in content]
+    blocks[-1] = {**blocks[-1], "cache_control": {"type": "ephemeral"}}
+    last["content"] = blocks
+    return [*messages[:-1], last]
+
+
 class AnthropicLLM:
     """Satisfies LLMProvider."""
 
@@ -38,6 +65,7 @@ class AnthropicLLM:
         effort: str = "low",
         max_tokens: int = 2048,
         max_tool_rounds: int = 4,
+        thinking: str = "adaptive",
     ) -> None:
         try:
             from anthropic import AsyncAnthropic
@@ -53,6 +81,58 @@ class AnthropicLLM:
         self.effort = effort
         self.max_tokens = max_tokens
         self.max_tool_rounds = max_tool_rounds
+        # One dict reused by stream_turn AND prewarm: a thinking-config
+        # mismatch between them writes a prompt-cache entry the real turns
+        # can never read (measured — the cache keys on thinking config).
+        self._thinking = {"type": thinking}
+
+    def _request_kwargs(self, system: str, tools: Sequence[dict[str, Any]]) -> dict[str, Any]:
+        """Everything the prompt cache keys on, built in exactly one place.
+
+        stream_turn and prewarm must send byte-identical model/thinking/
+        output_config/system/tools or the warm-up writes a cache entry the
+        real turns can never hit — an invariant a comment can't enforce.
+        """
+        return {
+            "model": self.model,
+            "thinking": self._thinking,
+            "output_config": {"effort": self.effort},
+            "system": [
+                {
+                    "type": "text",
+                    "text": system,
+                    # Persona + rules are stable for the session, so this
+                    # prefix is written once and read on every later turn.
+                    "cache_control": {"type": "ephemeral"},
+                }
+            ],
+            "tools": list(tools),
+        }
+
+    async def prewarm(
+        self,
+        *,
+        system: str,
+        messages: Sequence[dict[str, Any]] = (),
+        tools: Sequence[dict[str, Any]] = (),
+    ) -> None:
+        """Write the session's cache prefix and open the connection before turn 1.
+
+        The first real turn otherwise pays DNS + TLS to the API plus an uncached
+        read of the system prompt, tool schemas, and few-shot block — first
+        turns measured 1-2s slower than later ones. One tiny request at session
+        start moves all of that off the first answer's critical path.
+
+        `messages` must be the same few-shot prefix (with the same cache marks)
+        the real turns will send, and the thinking/output config must match
+        stream_turn's — a mismatch in either writes a cache entry the real
+        turns can never hit.
+        """
+        await self._client.messages.create(
+            **self._request_kwargs(system, tools),
+            max_tokens=64,
+            messages=[*messages, {"role": "user", "content": "Ready?"}],
+        )
 
     async def stream_turn(
         self,
@@ -71,23 +151,9 @@ class AnthropicLLM:
             round_started_text = False
 
             async with self._client.messages.stream(
-                model=self.model,
+                **self._request_kwargs(system, tools),
                 max_tokens=self.max_tokens,
-                # Adaptive thinking, depth controlled by effort. Do NOT disable
-                # thinking to save latency — see SessionConfig.effort.
-                thinking={"type": "adaptive"},
-                output_config={"effort": self.effort},
-                system=[
-                    {
-                        "type": "text",
-                        "text": system,
-                        # Persona + rules are stable for the session, so this
-                        # prefix is written once and read on every later turn.
-                        "cache_control": {"type": "ephemeral"},
-                    }
-                ],
-                messages=convo,
-                tools=list(tools),
+                messages=_cache_marked(convo),
             ) as stream:
                 async for event in stream:
                     if event.type == "content_block_delta" and event.delta.type == "text_delta":

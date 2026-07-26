@@ -8,7 +8,7 @@ providers use, so the whole loop is testable today.
 
 ```bash
 uv sync
-uv run pytest              # 75 tests
+uv run pytest              # 320 tests (22 provider/DB tests skip without extras)
 uv run tutor personas
 uv run tutor demo ada      # scripted turn + cue timeline
 uv run tutor show ada      # the compiled system prompt
@@ -89,18 +89,30 @@ per-segment time offsets (segment 2's timestamps start at its own zero), and
 actions past the end of speech (fire at the end — a late action is recoverable,
 a missing one isn't).
 
+One deliberate exception: the **first `present_visual` of a turn anchors at the
+start of the turn (cue 0)**, not at its position in the narration. It mounts
+the board with every step hidden, so there is nothing on it to sync — and
+holding it until the opening words play means a barge-in before that moment
+kills the still-pending board. Replacement boards later in the turn keep their
+narration anchor (a mid-turn board at cue 0 would clobber the picture the voice
+is still pointing at), and `reveal_step` cues always stay narration-anchored.
+
 ## Model configuration
 
 Default is `claude-sonnet-5` at `effort: "low"` — near-Opus reasoning at the
 latency the 1.2s budget actually needs. Swap to `claude-opus-5` for offline
 evaluation or pre-rendered library content, where latency doesn't bind.
 
-**Don't disable thinking to save latency.** On Opus 5, `thinking: disabled` has
-a failure mode where a tool call gets written into the visible response text
-instead of emitted as a `tool_use` block — the turn succeeds, no error, and the
-canvas action silently never fires. In this product that reads as "the tutor
-said it was drawing an arrow and didn't." Lower `effort` instead; it's the
-cheaper lever anyway.
+**Thinking is a caller-chosen dial, and it's model-specific.** The realtime
+worker runs Sonnet 5 with `thinking="disabled"`: adaptive thinking measured
+~400-900ms before the first text token, and Sonnet 5 emits clean `tool_use`
+blocks without it (verified live across whiteboard-heavy turns). Opus 5 is the
+opposite: `thinking: disabled` there has a failure mode where a tool call gets
+written into the visible response text instead of emitted as a `tool_use`
+block — the turn succeeds, no error, and the canvas action silently never
+fires. In this product that reads as "the tutor said it was drawing an arrow
+and didn't." If the worker ever moves to Opus, thinking goes back to
+`"adaptive"`; on Opus, lower `effort` is the cheaper latency lever.
 
 ## Wiring real providers
 
@@ -112,9 +124,21 @@ export ELEVENLABS_API_KEY=...
 
 `AnthropicLLM` owns the tool-result round trip internally. Canvas actions are
 fire-and-forget, but the API still needs a `tool_result` per `tool_use` before
-the turn continues — so the provider acks each one with a stub immediately and
-yields the core a flat ordered event stream. A canvas action never blocks on the
-client, and `TutorSession` stays free of Anthropic-shaped plumbing.
+the turn continues — so the provider yields each call to the core (which
+validates it during the yield) and acks it immediately: a stub for accepted
+actions, an `is_error` tool_result carrying the validation message for
+rejected ones, so the model fixes the spec instead of narrating a board that
+never mounted. A canvas action never blocks on the client, and `TutorSession`
+stays free of Anthropic-shaped plumbing.
+
+Real providers also expose `prewarm()` (and the TTS clients `aclose()`). The
+worker calls `session.prewarm()` at startup — it writes the prompt-cache
+prefix and opens the LLM/TTS connections while the learner is still joining,
+which is most of why turn 1 is no slower than the rest — and
+`session.prewarm_tts()` (closing the replaced client) when an avatar swap or
+demotion changes the TTS path. Both are duck-typed and optional: a provider
+without them still works, it just starts its first turn cold, and a replaced
+TTS client without `aclose()` leaks its pooled connection.
 
 Merge Agent Handler tools (Phase 5) must **not** be acked this way. They leave
 our infrastructure, can exceed a second, and must be narration-covered (§7.3).
@@ -143,8 +167,11 @@ handshake, and the retrieval index. WARN means degraded but usable; FAIL means
 don't start.
 
 Set `TUTOR_METRICS_PATH=run.jsonl` and every turn appends its own latency
-breakdown — STT finalization, model-to-first-audio, and the total against the
-1200ms budget, separated so a regression points at a subsystem.
+breakdown — STT finalization, retrieval, model first-token, and
+time-to-first-audio measured at the first audible chunk, plus the total
+against the 1200ms budget, separated so a regression points at a subsystem.
+The end-of-speech silence window is tunable without a code change:
+`TUTOR_VAD_MIN_SILENCE_MS` (milliseconds, default 500, clamped to ≥100).
 
 ### Barge-in is audio, not just cues
 

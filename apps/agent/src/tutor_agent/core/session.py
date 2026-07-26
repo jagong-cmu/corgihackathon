@@ -56,9 +56,19 @@ class TurnResult:
     cancelled: bool = False
 
     first_audio_ms: float | None = None
-    """Measured from the start of the turn to the first synthesized segment.
-    The ≤1.2s budget (§4) is measured from end-of-user-speech, so the realtime
-    adapter adds STT finalization on top of this number."""
+    """Measured from the start of the turn to the first audio chunk pushed to
+    the channel — the moment the learner starts hearing something, not the end
+    of the first sentence's synthesis. The ≤1.2s budget (§4) is measured from
+    end-of-user-speech, so the realtime adapter adds STT finalization on top
+    of this number."""
+
+    llm_first_token_ms: float | None = None
+    """Turn start to the model's first text delta. Separates 'the model was
+    slow to start' from 'TTS was slow' when first_audio_ms regresses."""
+
+    retrieval_ms: float | None = None
+    """Time spent in retrieval ahead of the model call. None when the session
+    has no retrieval provider."""
 
 
 @dataclass
@@ -74,10 +84,13 @@ class SessionConfig:
     low effort holds up well here and is the main latency lever. Raise to
     medium if you see shallow reasoning on multi-step problems.
 
-    Do NOT reach for thinking:disabled to save latency — on Opus 5 that has a
-    failure mode where a tool call gets written into the visible text instead of
-    emitted as a tool_use block, which in this product reads as 'the tutor said
-    it was drawing an arrow and didn't'."""
+    Thinking policy is per model. On Sonnet 5, thinking:disabled is safe and
+    worth ~400-900ms of time-to-first-token (verified 2026-07-26: clean
+    tool_use emission across whiteboard-heavy turns) — the live worker runs
+    that way. On Opus 5 do NOT disable thinking: it has a failure mode where a
+    tool call gets written into the visible text instead of emitted as a
+    tool_use block, which in this product reads as 'the tutor said it was
+    drawing an arrow and didn't'."""
 
     max_history_turns: int = 12
     retrieval_limit: int = 5
@@ -160,6 +173,16 @@ class TutorSession:
         # newer utterance abandons an unspoken turn (split VAD finals, or an
         # interjection during the pre-first-audio gap).
         self._active_transcript: str | None = None
+        # perf_counter of the active turn's first pushed audio chunk, so
+        # first_audio_ms measures when the learner starts HEARING something
+        # rather than when the first sentence finishes synthesizing.
+        self._first_audio_at: float | None = None
+        # True when preempt() handed the active turn's transcript to the next
+        # turn. A transcript either folds forward or stays in history — never
+        # both, or the model reads the question twice. Finish-sentence mode
+        # makes this reachable: an in-flight sentence can still push audio
+        # AFTER preempt() took the "unspoken" path, flipping _active_turn_spoke.
+        self._transcript_folded = False
         toolset = self.config.toolset
         # The whiteboard toolset offers ONE tool. present_visual needs the
         # tool round trip (a big spec, and validation errors must flow back
@@ -177,6 +200,20 @@ class TutorSession:
         # an unknown toolset, which also catches a typo'd TUTOR_TOOLSET early).
         self._system = build_system_prompt(persona, toolset=toolset)
         self._few_shot = build_few_shot_messages(persona)
+        if self._few_shot:
+            # Cache breakpoint on the stable persona prefix. The provider also
+            # marks the newest message per request, but that moving mark misses
+            # whenever the recent conversation changed shape (history trimmed,
+            # retrieval context differs) — this one always hits.
+            last = dict(self._few_shot[-1])
+            last["content"] = [
+                {
+                    "type": "text",
+                    "text": last["content"],
+                    "cache_control": {"type": "ephemeral"},
+                }
+            ]
+            self._few_shot[-1] = last
 
     # -- context assembly ---------------------------------------------------
 
@@ -211,10 +248,57 @@ class TutorSession:
             "and use show_source when their notation matters:\n\n" + rendered
         )
 
-    def _build_messages(self, transcript: str, context: str | None) -> list[dict[str, Any]]:
-        history = self._history[-(self.config.max_history_turns * 2) :]
-        user_content = transcript if not context else f"{context}\n\n---\n\n{transcript}"
-        return [*self._few_shot, *history, {"role": "user", "content": user_content}]
+    def _build_messages(self, user_content: str) -> list[dict[str, Any]]:
+        return [*self._few_shot, *self._history, {"role": "user", "content": user_content}]
+
+    # Fraction of the history cap kept after a trim. The gap between keep and
+    # cap is the hysteresis: how many turns pass before the prefix shifts again.
+    _TRIM_KEEP_QUARTERS = 3
+
+    def _append_history(self, role: str, content: str) -> None:
+        """Append to history, trimming in blocks rather than per turn.
+
+        A rolling `[-limit:]` window shifts the prompt prefix on every turn once
+        the cap is hit, and a shifted prefix is a prompt-cache miss on the whole
+        conversation. Cutting a chunk at once keeps the prefix byte-stable for
+        the next several turns between trims.
+
+        The cut lands on a user-message boundary: history that opens with an
+        orphaned assistant half-answer reads (after the API merges consecutive
+        same-role turns) as the tutor answering a question that was never asked.
+        """
+        self._history.append({"role": role, "content": content})
+        limit = self.config.max_history_turns * 2
+        if len(self._history) > limit:
+            drop = len(self._history) - (limit * self._TRIM_KEEP_QUARTERS // 4)
+            while drop < len(self._history) and self._history[drop]["role"] != "user":
+                drop += 1
+            del self._history[:drop]
+
+    def _remember_interrupted_turn(self, user_content: str, timeline: TurnTimeline) -> None:
+        """Keep what an interrupted turn actually said.
+
+        A cancelled turn used to vanish from history entirely, so after every
+        barge-in the tutor forgot both the question and the half-answer the
+        learner just heard — the follow-up ("wait, can you show me an
+        example?") arrived with zero context. Only turns that spoke are
+        recorded: an unspoken turn's transcript is folded into the next turn
+        by preempt(), and recording it here too would double the question.
+        The interruption is made explicit so the model reads the abrupt end
+        as an interruption rather than a complete thought.
+
+        Recorded speech is truncated to the SYNTHESIZED prefix: speech_text
+        accumulates every streamed delta, including sentences the cancel
+        dropped before synthesis — history claiming the learner heard those
+        makes the tutor refuse to repeat the very steps that were cut off.
+        (Hard barge-in can still discard already-pushed audio client-side;
+        that overcount is bounded by one sentence.)
+        """
+        heard = timeline.speech_text[: timeline.synthesized_chars].strip()
+        if self._transcript_folded or not self._active_turn_spoke or not heard:
+            return
+        self._append_history("user", user_content)
+        self._append_history("assistant", heard + " [the learner interrupted you here]")
 
     # -- the turn -----------------------------------------------------------
 
@@ -222,6 +306,7 @@ class TutorSession:
         turn_id = self._next_turn_id()
         self._active_turn_spoke = False
         self._active_transcript = transcript
+        self._transcript_folded = False
         superseded = self._cues.begin_turn(turn_id)
         if superseded is not None:
             # A new turn started while the last one was still in flight. Its
@@ -238,8 +323,16 @@ class TutorSession:
                 if time.perf_counter() < playing[1]:
                     await self._interrupt_output(playing[0], "barge_in")
 
+        retrieve_started = time.perf_counter()
         context = await self._retrieve(transcript)
-        messages = self._build_messages(transcript, context)
+        retrieval_ms = (
+            (time.perf_counter() - retrieve_started) * 1000 if self.retrieval is not None else None
+        )
+        # The context-augmented content is also what goes into history below:
+        # the next turn's prompt must match this one byte-for-byte up to the
+        # cache breakpoint, or the whole conversation re-processes.
+        user_content = transcript if not context else f"{context}\n\n---\n\n{transcript}"
+        messages = self._build_messages(user_content)
 
         timeline = TurnTimeline(turn_id=turn_id, lead_ms=self.config.lead_ms)
         chunker = SentenceChunker(
@@ -250,7 +343,8 @@ class TutorSession:
         streams_audio = self.channel.capabilities.streams_audio
         dropped: list[tuple[str, list[str]]] = []
         stop_reason = "end_turn"
-        first_audio_ms: float | None = None
+        llm_first_token_ms: float | None = None
+        self._first_audio_at = None
         started = time.perf_counter()
         # Reveal bookkeeping for the safety net at the end of the turn: which
         # steps the presented spec promises, and which actually revealed.
@@ -258,8 +352,11 @@ class TutorSession:
         revealed_step_ids: set[str] = set()
 
         async def speak_clean(text: str) -> None:
-            """Marker-free speech: into the transcript, and out as audio."""
-            nonlocal first_audio_ms
+            """Marker-free speech: into the transcript, and out as audio.
+
+            First-audio is stamped in _push_audio (the first audible chunk),
+            not here — synthesis completion overstates what the learner waits.
+            """
             timeline.add_text(text)
             if not streams_audio:
                 return
@@ -270,8 +367,6 @@ class TutorSession:
                 if not self._cues.should_emit(turn_id):
                     return
                 await self._speak_segment(sentence, timeline)
-                if first_audio_ms is None:
-                    first_audio_ms = (time.perf_counter() - started) * 1000
                 await self._emit(turn_id, timeline.resolve_ready())
 
         def add_reveal(step_id: str) -> None:
@@ -288,91 +383,11 @@ class TutorSession:
             timeline.add_action({"type": "reveal_step", "stepId": step_id})
             revealed_step_ids.add(step_id)
 
-        async for event in self.llm.stream_turn(
-            system=self._system, messages=messages, tools=self._tools
-        ):
-            if not self._cues.should_emit(turn_id):
-                # Cancelled mid-generation. Bail out of the stream instead of
-                # draining the remaining tool rounds — this loop holds the
-                # worker's turn lock, and every extra round is dead air for
-                # the utterance that caused the cancellation.
-                stop_reason = "cancelled"
-                break
-            if isinstance(event, TextDelta):
-                # Reveals ride inline as [[reveal:step-id]] markers so the
-                # narration is ONE continuous stream — a reveal_step tool
-                # call would end the message and cost a full API round trip
-                # of silence per beat. The scanner strips markers from the
-                # spoken text and anchors each at the character it occupied.
-                for piece in scanner.feed(event.text):
-                    if isinstance(piece, RevealMarker):
-                        add_reveal(piece.step_id)
-                    else:
-                        await speak_clean(piece)
-                    if not self._cues.should_emit(turn_id):
-                        break
-
-            elif isinstance(event, ToolCall):
-                # A tool call ends the model's message, so whatever speech is
-                # buffered is final — flush it now instead of holding it until
-                # the turn ends. Without this the first round's speech waits for
-                # the second round to finish, which is most of the latency.
-                # This does not affect anchoring: char_offset was already fixed
-                # by add_text.
-                if streams_audio and chunker.pending.strip():
-                    await self._speak_segment(chunker.flush(), timeline)
-                    if first_audio_ms is None:
-                        first_audio_ms = (time.perf_counter() - started) * 1000
-                    await self._emit(turn_id, timeline.resolve_ready())
-
-                errors = validate_action(event.name, event.input)
-                if errors:
-                    # Drop, log, continue. Never raise on the render path. The
-                    # error rides back on the event so the provider returns an
-                    # is_error tool_result — the model must know the board
-                    # never got this action, or it reveals steps of a visual
-                    # the learner cannot see.
-                    dropped.append((event.name, errors))
-                    event.error = (
-                        f"Rejected — this {event.name} never reached the board. "
-                        f"Fix these problems and call it again: " + "; ".join(errors)
-                    )
-                    log.warning(
-                        "dropping invalid action %s in %s: %s",
-                        event.name,
-                        turn_id,
-                        "; ".join(errors),
-                    )
-                    continue
-                pending = timeline.add_action({"type": event.name, **event.input})
-                if event.name == "present_visual":
-                    # The board mount waits on no narration (cue 0), so send
-                    # it the moment the model authors it. resolve_ready would
-                    # hold it until the first sentence's synthesis lands
-                    # timings — seconds of an empty board for no reason.
-                    await self._emit(turn_id, [timeline.emit_now(pending)])
-                    spec = event.input.get("spec")
-                    steps = spec.get("drawSequence", []) if isinstance(spec, dict) else []
-                    presented_step_ids = [
-                        s["id"]
-                        for s in steps
-                        if isinstance(s, dict) and isinstance(s.get("id"), str)
-                    ]
-                    # A re-present replaces the whole board; prior reveals
-                    # belong to the dead spec.
-                    revealed_step_ids = set()
-                elif event.name == "reveal_step":
-                    # Tool-based reveals still work (older prompts, model
-                    # habit) — track them so the safety net stays accurate.
-                    step_id = event.input.get("stepId")
-                    if isinstance(step_id, str):
-                        revealed_step_ids.add(step_id)
-
-            elif isinstance(event, TurnEnd):
-                stop_reason = event.stop_reason
-
-        # A turn superseded mid-stream produces nothing.
-        if not self._cues.should_emit(turn_id):
+        def _cancelled_result() -> TurnResult:
+            # Every cancelled exit funnels through here; these fields were
+            # once two hand-copied blocks, and new fields only ever made it
+            # into one of them.
+            self._remember_interrupted_turn(user_content, timeline)
             return TurnResult(
                 turn_id=turn_id,
                 speech_text=timeline.speech_text,
@@ -380,7 +395,130 @@ class TutorSession:
                 dropped_actions=dropped,
                 stop_reason=stop_reason,
                 cancelled=True,
+                first_audio_ms=(
+                    (self._first_audio_at - started) * 1000
+                    if self._first_audio_at is not None
+                    else None
+                ),
+                llm_first_token_ms=llm_first_token_ms,
+                retrieval_ms=retrieval_ms,
             )
+
+        # preempt() can kill the turn during the retrieval await above.
+        # Issuing the model request anyway pays connection + prefill + first
+        # token for a discarded answer — while holding the worker's turn lock,
+        # queueing the very folded turn that replaced us.
+        if not self._cues.should_emit(turn_id):
+            stop_reason = "cancelled"
+            return _cancelled_result()
+
+        llm_stream = self.llm.stream_turn(
+            system=self._system, messages=messages, tools=self._tools
+        )
+        try:
+            async for event in llm_stream:
+                if not self._cues.should_emit(turn_id):
+                    # Cancelled mid-generation. Bail out of the stream instead
+                    # of draining the remaining tool rounds — this loop holds
+                    # the worker's turn lock, and every extra round is dead air
+                    # for the utterance that caused the cancellation.
+                    stop_reason = "cancelled"
+                    break
+                if isinstance(event, TextDelta):
+                    if llm_first_token_ms is None:
+                        llm_first_token_ms = (time.perf_counter() - started) * 1000
+                    # Reveals ride inline as [[reveal:step-id]] markers so the
+                    # narration is ONE continuous stream — a reveal_step tool
+                    # call would end the message and cost a full API round trip
+                    # of silence per beat. The scanner strips markers from the
+                    # spoken text and anchors each at the character it occupied.
+                    for piece in scanner.feed(event.text):
+                        if isinstance(piece, RevealMarker):
+                            add_reveal(piece.step_id)
+                        else:
+                            await speak_clean(piece)
+                        if not self._cues.should_emit(turn_id):
+                            break
+
+                elif isinstance(event, ToolCall):
+                    # A tool call ends the model's message, so whatever speech
+                    # is buffered is final — flush it now instead of holding it
+                    # until the turn ends. Without this the first round's
+                    # speech waits for the second round to finish, which is
+                    # most of the latency. This does not affect anchoring:
+                    # char_offset was already fixed by add_text.
+                    if streams_audio and chunker.pending.strip():
+                        await self._speak_segment(chunker.flush(), timeline)
+                        await self._emit(turn_id, timeline.resolve_ready())
+
+                    errors = validate_action(event.name, event.input)
+                    if errors:
+                        # Drop, log, continue. Never raise on the render path.
+                        # The error rides back on the event so the provider
+                        # returns an is_error tool_result — the model must know
+                        # the board never got this action, or it reveals steps
+                        # of a visual the learner cannot see.
+                        dropped.append((event.name, errors))
+                        event.error = (
+                            f"Rejected — this {event.name} never reached the board. "
+                            f"Fix these problems and call it again: " + "; ".join(errors)
+                        )
+                        log.warning(
+                            "dropping invalid action %s in %s: %s",
+                            event.name,
+                            turn_id,
+                            "; ".join(errors),
+                        )
+                        continue
+                    pending = timeline.add_action({"type": event.name, **event.input})
+                    if event.name == "present_visual":
+                        # The board mount waits on no narration (cue 0), so send
+                        # it the moment the model authors it. resolve_ready would
+                        # hold it until the first sentence's synthesis lands
+                        # timings — seconds of an empty board for no reason.
+                        await self._emit(turn_id, [timeline.emit_now(pending)])
+                        spec = event.input.get("spec")
+                        steps = spec.get("drawSequence", []) if isinstance(spec, dict) else []
+                        presented_step_ids = [
+                            s["id"]
+                            for s in steps
+                            if isinstance(s, dict) and isinstance(s.get("id"), str)
+                        ]
+                        # A re-present replaces the whole board; prior reveals
+                        # belong to the dead spec.
+                        revealed_step_ids = set()
+                    else:
+                        if event.name == "reveal_step":
+                            # Tool-based reveals still work (older prompts,
+                            # model habit) — track them so the safety net
+                            # stays accurate.
+                            step_id = event.input.get("stepId")
+                            if isinstance(step_id, str):
+                                revealed_step_ids.add(step_id)
+                        # An action whose anchor already sits inside
+                        # synthesized speech must go out NOW — riding the next
+                        # sentence's flush delays it by a whole synthesis, and
+                        # a barge-in in that window kills it entirely.
+                        await self._emit(turn_id, timeline.resolve_ready())
+
+                elif isinstance(event, TurnEnd):
+                    stop_reason = event.stop_reason
+        finally:
+            # The break paths above (barge-in, preempt) would otherwise leave
+            # the generator suspended inside an open HTTP stream: the dead
+            # turn keeps generating server-side, burning output-token rate
+            # limit that then queues the very turn that interrupted it.
+            # A no-op when the stream ran to completion.
+            await llm_stream.aclose()
+
+        first_audio_ms = (
+            (self._first_audio_at - started) * 1000 if self._first_audio_at is not None else None
+        )
+
+        # A turn superseded mid-stream produces nothing further — but what it
+        # already said out loud stays on the record.
+        if not self._cues.should_emit(turn_id):
+            return _cancelled_result()
 
         # The scanner may hold text that never resolved into a marker: a lone
         # '[' is prose and gets spoken; an incomplete marker fragment is
@@ -398,23 +536,15 @@ class TutorSession:
             tail = chunker.flush()
             if tail and self._cues.should_emit(turn_id):
                 await self._speak_segment(tail, timeline)
-                if first_audio_ms is None:
-                    first_audio_ms = (time.perf_counter() - started) * 1000
+                if first_audio_ms is None and self._first_audio_at is not None:
+                    first_audio_ms = (self._first_audio_at - started) * 1000
                 await self._emit(turn_id, timeline.resolve_ready())
 
         # A barge-in can land during the tail segment too — after the
         # mid-stream check above. Flushing or recording playout past this
         # point would emit the very fragment the interruption dropped.
         if not self._cues.should_emit(turn_id):
-            return TurnResult(
-                turn_id=turn_id,
-                speech_text=timeline.speech_text,
-                actions=[],
-                dropped_actions=dropped,
-                stop_reason=stop_reason,
-                cancelled=True,
-                first_audio_ms=first_audio_ms,
-            )
+            return _cancelled_result()
 
         # Safety net: a presented spec whose steps never revealed leaves a
         # mounted-but-blank board — worse than late reveals. Any step the
@@ -461,9 +591,12 @@ class TutorSession:
                 self._playing_out = (turn_id, max(audio_end, time.perf_counter()) + 2.0)
 
         speech = timeline.speech_text
-        self._history.append({"role": "user", "content": transcript})
+        # user_content, not transcript: history must replay exactly what this
+        # turn's prompt contained (retrieval context included) or the next
+        # turn's cache prefix diverges here and the conversation re-processes.
+        self._append_history("user", user_content)
         if speech.strip():
-            self._history.append({"role": "assistant", "content": speech})
+            self._append_history("assistant", speech)
 
         return TurnResult(
             turn_id=turn_id,
@@ -472,6 +605,8 @@ class TutorSession:
             dropped_actions=dropped,
             stop_reason=stop_reason,
             first_audio_ms=first_audio_ms,
+            llm_first_token_ms=llm_first_token_ms,
+            retrieval_ms=retrieval_ms,
         )
 
     async def _emit(self, turn_id: str, actions: list[TimedAction]) -> None:
@@ -493,10 +628,15 @@ class TutorSession:
             await self._speak_streaming(text, timeline, voice_id=voice_id, model=model)
         else:
             result = await self.tts.synthesize(text, voice_id=voice_id, model=model)
-            if not self._cues.should_emit(timeline.turn_id) and not (
-                self.config.finish_sentence_on_barge_in
+            if not self._cues.should_emit(timeline.turn_id) and (
+                not self.config.finish_sentence_on_barge_in or not self._active_turn_spoke
             ):
-                return  # hard barge-in while synthesizing — the audio is dead
+                # Hard barge-in while synthesizing — the audio is dead. The
+                # spoke check covers preempt's fold path: "finish the sentence"
+                # only makes sense for a sentence the learner started hearing;
+                # a turn that never spoke would play an orphan reply to a
+                # fragment the next turn is about to re-answer.
+                return
             timeline.attach_timings(result.timings)
             await self._push_audio(result.audio)
 
@@ -515,8 +655,8 @@ class TutorSession:
         ends: list[int] = []
 
         async for chunk in self.tts.synthesize_stream(text, voice_id=voice_id, model=model):
-            if not self._cues.should_emit(timeline.turn_id) and not (
-                self.config.finish_sentence_on_barge_in
+            if not self._cues.should_emit(timeline.turn_id) and (
+                not self.config.finish_sentence_on_barge_in or not self._active_turn_spoke
             ):
                 # HARD barge-in mid-sentence: stop pushing NOW. clear_buffer
                 # abandons the avatar's current stream, and frames pushed after
@@ -553,12 +693,64 @@ class TutorSession:
         timeline.attach_timings(CharacterTimings(characters=joined, start_ms=starts, end_ms=ends))
 
     async def _push_audio(self, audio: bytes) -> None:
+        if self._first_audio_at is None:
+            self._first_audio_at = time.perf_counter()
         self._active_turn_spoke = True
         await self.channel.send_audio(audio)
         if self.avatar is not None:
             await self.avatar.push_audio(audio)
 
     # -- lifecycle ----------------------------------------------------------
+
+    async def prewarm(self) -> None:
+        """Pay the session's cold-start costs before the learner's first question.
+
+        Two independent warm-ups, run concurrently: the LLM writes the prompt
+        cache (system + tools + few-shot) and opens its connection; the TTS
+        opens its connection so the first sentence skips the TLS handshake.
+        First turns measured 1-2s slower than warm ones without this.
+        Best-effort by design — a failed warm-up costs latency on turn 1,
+        never the session.
+        """
+
+        tasks = []
+        llm_prewarm = getattr(self.llm, "prewarm", None)
+        if llm_prewarm is not None:
+            tasks.append(
+                self._warm(
+                    "llm",
+                    llm_prewarm(system=self._system, messages=self._few_shot, tools=self._tools),
+                )
+            )
+        tts_prewarm = getattr(self.tts, "prewarm", None)
+        if tts_prewarm is not None:
+            tasks.append(self._warm("tts", tts_prewarm()))
+        if tasks:
+            await asyncio.gather(*tasks)
+
+    async def prewarm_tts(self) -> None:
+        """Warm just the TTS connection — for when self.tts was rebuilt.
+
+        The worker swaps in a fresh provider (avatar activation, avatar
+        fallback), and a fresh provider is a cold connection; the next
+        sentence pays the handshake unless it's warmed here. Same best-effort
+        contract as prewarm().
+        """
+        tts_prewarm = getattr(self.tts, "prewarm", None)
+        if tts_prewarm is not None:
+            await self._warm("tts", tts_prewarm())
+
+    @staticmethod
+    async def _warm(name: str, coro: Any) -> None:
+        try:
+            await coro
+        except Exception:
+            # exc_info matters: a prewarm that fails EVERY session (auth or
+            # config rot) looks identical to a transient blip without it, and
+            # the whole latency win silently evaporates.
+            log.warning(
+                "%s prewarm failed — the next turn pays the cold start", name, exc_info=True
+            )
 
     async def barge_in(self) -> None:
         """The learner started talking. Kill the current turn's output.
@@ -610,6 +802,10 @@ class TutorSession:
             await self.barge_in()
             return None
         self._cues.cancel(turn_id)
+        # The transcript now folds into the next turn; the dying turn must not
+        # also write it to history (an in-flight sentence finishing after this
+        # point would otherwise trip _remember_interrupted_turn).
+        self._transcript_folded = True
         return self._active_transcript
 
     async def _interrupt_output(self, turn_id: str, reason: str) -> None:
@@ -651,6 +847,6 @@ class TutorSession:
         described = "; ".join(
             f"{e.get('kind')} {', '.join(e.get('shapeIds', [])) or '(no shapes)'}" for e in events
         )
-        self._history.append(
-            {"role": "user", "content": f"[The learner just did this on the board: {described}]"}
+        self._append_history(
+            "user", f"[The learner just did this on the board: {described}]"
         )

@@ -90,15 +90,51 @@ class TurnMetricsSink:
 # output rate we publish at.
 STT_SAMPLE_RATE = 16_000
 
+def _env_int(name: str, default: int, *, minimum: int) -> int:
+    """Read an integer knob; a malformed or absurd value must not kill (or
+    quietly destabilize) the worker — a zero or negative VAD window turns
+    every word into its own turn, far from the env var that caused it."""
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        log.warning("%s=%r is not an integer — using %d", name, raw, default)
+        return default
+    if value < minimum:
+        log.warning("%s=%d is below the floor of %d — clamping", name, value, minimum)
+        return minimum
+    return value
+
+
+async def _aclose_tts(tts) -> None:
+    """Close a replaced TTS provider's pooled connection instead of leaking it.
+
+    The replaced client was prewarmed and keepalive now holds sockets for 120s,
+    so what leaks is a LIVE connection, not a dormant struct.
+    """
+    aclose = getattr(tts, "aclose", None)
+    if aclose is None:
+        return
+    try:
+        await aclose()
+    except Exception:
+        log.debug("replaced tts client close failed — socket left to GC")
+
+
 # The single biggest latency knob in the whole loop, and it isn't in the model.
 # The plugin defaults to min_silence_duration_ms=2500 / vad_silence_threshold_secs=1.5,
 # which makes every turn wait 2.5s of silence before finalizing — more than the
 # entire 1.2s budget, spent doing nothing.
 #
-# 600ms is a tradeoff, not a free win: too low and a learner pausing mid-thought
-# gets cut off. Worth re-testing at 600/900/1200 with real speech.
+# 500ms is a tradeoff, not a free win: too low and a learner pausing mid-thought
+# gets cut off. The preempt/fold path (see FINAL_TRANSCRIPT below) makes an
+# over-eager split recoverable — the fragments rejoin into one turn — which is
+# why 500 is tenable where it wouldn't be otherwise. Env-tunable so it can be
+# re-tested against real speech without a code change.
 VAD_OPTIONS = {
-    "min_silence_duration_ms": 600,
+    "min_silence_duration_ms": _env_int("TUTOR_VAD_MIN_SILENCE_MS", 500, minimum=100),
     "vad_silence_threshold_secs": 0.5,
     "min_speech_duration_ms": 250,
 }
@@ -144,7 +180,15 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         # every tool call costs a round, so present_visual + a 4-7 step diagram
         # needs 6-9 rounds. The old default of 4 cut every real lesson off
         # mid-explanation with steps never revealed.
-        llm=AnthropicLLM(model="claude-sonnet-5", effort="low", max_tool_rounds=12),
+        #
+        # thinking="disabled" is a Sonnet-5-specific latency call: adaptive
+        # thinking measured ~400-900ms before the first text token, and Sonnet 5
+        # (unlike Opus 5 — see SessionConfig.effort) emits clean tool_use blocks
+        # without it, verified 2026-07-26 across whiteboard-heavy turns. If this
+        # ever moves to Opus, thinking must go back to "adaptive".
+        llm=AnthropicLLM(
+            model="claude-sonnet-5", effort="low", max_tool_rounds=12, thinking="disabled"
+        ),
         # The persona's voice.provider picks the vendor. PCM at LiveKit's
         # native rate — mp3 into an AudioSource is noise.
         tts=make_tts(persona, sample_rate=SAMPLE_RATE),
@@ -158,6 +202,12 @@ async def entrypoint(ctx: agents.JobContext) -> None:
     )
     if pool is not None:
         ctx.add_shutdown_callback(pool.close)
+
+    # Cold-start costs off the first answer's critical path: write the prompt
+    # cache and open the LLM/TTS connections now, while the learner is still
+    # joining. Runs concurrently with the rest of setup; collected at the end
+    # of this function so the task can't be garbage-collected mid-flight.
+    warmup_task = asyncio.create_task(session.prewarm())
 
     stt = lk_elevenlabs.STT(
         # Explicit: the plugin's env fallback reads ELEVEN_API_KEY, not the
@@ -193,7 +243,9 @@ async def entrypoint(ctx: agents.JobContext) -> None:
             return
         log.warning("avatar lost (%s) — falling back to the direct voice track", reason)
         session.avatar = None
+        old_tts = session.tts
         session.tts = make_tts(persona, sample_rate=SAMPLE_RATE)
+        await _aclose_tts(old_tts)
         try:
             await dead.stop()
         except Exception:
@@ -205,9 +257,27 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         )
         adapter.audio_source = voice_source
         adapter.audio_rerouted = False
+        # The rebuilt provider is cold, and demotion runs right before a turn
+        # that's already waiting on this lock — one warm-up round-trip now
+        # beats a TLS handshake inside that turn's first-audio budget. Tightly
+        # bounded: this runs UNDER turn_lock, and if the vendor is degraded
+        # (a likely cause of the avatar dying), a full client-timeout wait
+        # here would be the biggest latency on the whole recovery path.
+        try:
+            await asyncio.wait_for(session.prewarm_tts(), timeout=1.5)
+        except TimeoutError:
+            log.warning("tts prewarm timed out during avatar fallback — continuing cold")
 
-    async def run_turn(transcript: str) -> None:
-        """One turn. Serialized so a fast follow-up queues instead of racing.
+    # Transcripts waiting for the turn lock. Split VAD finals land here as
+    # separate fragments; whichever drainer wins the lock takes ALL of them as
+    # ONE turn. session.preempt() only folds into the ACTIVE turn — while the
+    # lock is held by a dying turn (exactly the multi-clause-interruption
+    # case), the session sees no active turn and the fold would silently
+    # fail, answering each fragment separately.
+    pending_transcripts: list[str] = []
+
+    async def run_turn() -> None:
+        """Drain pending transcripts as one turn. Serialized on turn_lock.
 
         Spawned fire-and-forget, so an exception here evaporates unless caught:
         the learner hears dead air and the log shows a healthy session. Every
@@ -216,14 +286,20 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         """
         nonlocal speech_ended_at
         try:
-            await _run_turn_locked(transcript)
+            await _run_turn_locked()
         except Exception:
-            log.exception("turn failed for %r — the learner heard silence", transcript[:80])
+            log.exception("turn failed — the learner heard silence")
             speech_ended_at = None
 
-    async def _run_turn_locked(transcript: str) -> None:
+    async def _run_turn_locked() -> None:
         nonlocal speech_ended_at
         async with turn_lock:
+            if not pending_transcripts:
+                return  # an earlier drainer already took this fragment
+            if len(pending_transcripts) > 1:
+                log.info("folding %d split finals into one turn", len(pending_transcripts))
+            transcript = " ".join(pending_transcripts)
+            pending_transcripts.clear()
             # Avatar health gate. started_streaming guards the startup window:
             # a freshly-handshaken avatar's participant takes seconds to join,
             # and that is not death.
@@ -266,9 +342,11 @@ async def entrypoint(ctx: agents.JobContext) -> None:
                     "persona": persona.id,
                     "avatar": persona.avatar.provider if avatar is not None else None,
                     "transcriptChars": len(transcript),
-                    # The three legs of the budget, separated so a regression
-                    # points at a subsystem instead of at "the loop got slower".
+                    # The legs of the budget, separated so a regression points
+                    # at a subsystem instead of at "the loop got slower".
                     "sttFinalizeMs": _round(stt_finalize_ms),
+                    "retrievalMs": _round(result.retrieval_ms),
+                    "llmFirstTokenMs": _round(result.llm_first_token_ms),
                     "modelToFirstAudioMs": _round(result.first_audio_ms),
                     "firstAudioMs": _round(total),
                     "withinBudget": None if total is None else total <= BUDGET_MS,
@@ -355,21 +433,36 @@ async def entrypoint(ctx: agents.JobContext) -> None:
             pump_task.cancel()
             await stream.aclose()
 
+    last_interim_at: float | None = None
+
     async def _on_speech_event(event: agents.stt.SpeechEvent) -> None:
-        nonlocal speech_ended_at
+        nonlocal speech_ended_at, last_interim_at
 
         if event.type == agents.stt.SpeechEventType.START_OF_SPEECH:
+            # A fresh utterance begins — a leftover timestamp from a discarded
+            # one must not leak into this turn's sttFinalizeMs.
+            last_interim_at = None
             # Barge-in fires HERE, not on the final transcript. Waiting for
             # finalization means the tutor keeps talking over the learner for
             # the whole VAD window.
             await session.barge_in()
 
-        elif event.type == agents.stt.SpeechEventType.END_OF_SPEECH:
-            # The budget clock (§4) starts when the learner stops talking.
-            speech_ended_at = time.perf_counter()
+        elif event.type == agents.stt.SpeechEventType.INTERIM_TRANSCRIPT:
+            # The budget clock (§4) starts when the learner stops talking, but
+            # the plugin's END_OF_SPEECH arrives AFTER the final transcript —
+            # by then the turn is already running, which is why sttFinalizeMs
+            # was null on every recorded turn. Interims stop arriving when the
+            # learner stops speaking, so the last one before the final is the
+            # closest observable stand-in for end-of-speech.
+            last_interim_at = time.perf_counter()
 
         elif event.type == agents.stt.SpeechEventType.FINAL_TRANSCRIPT:
             text = event.alternatives[0].text.strip() if event.alternatives else ""
+            # Consume the timestamp even for empty finals — a stale one left
+            # behind would inflate the NEXT turn's sttFinalizeMs by however
+            # long the room sat quiet.
+            speech_ended_at = last_interim_at
+            last_interim_at = None
             if not text:
                 return
             log.info("learner: %s", text)
@@ -381,9 +474,11 @@ async def entrypoint(ctx: agents.JobContext) -> None:
             if leftover:
                 log.info("folding unspoken turn's transcript into the new turn")
                 text = f"{leftover} {text}"
+            pending_transcripts.append(text)
             # Not awaited: the STT loop must keep consuming so barge-in during
-            # the tutor's reply still registers.
-            asyncio.create_task(run_turn(text))
+            # the tutor's reply still registers. The drainer that wins the
+            # lock takes every pending fragment (see pending_transcripts).
+            asyncio.create_task(run_turn())
 
     # The learner usually joins and publishes their microphone while we are
     # still loading the persona or inside the avatar handshake — seconds during
@@ -400,6 +495,11 @@ async def entrypoint(ctx: agents.JobContext) -> None:
                     _maybe_transcribe(publication.track, remote.identity)
     except Exception:
         log.exception("initial track sweep failed — relying on live subscriptions only")
+
+    # Collect the warm-up BEFORE the avatar swap: the swap replaces (and now
+    # closes) the TTS client the warm-up may still be touching. prewarm()
+    # swallows its own failures — this await only keeps the task alive.
+    await warmup_task
 
     # Collect the avatar handshake LAST: the mic above is already hot, so a
     # question asked during these seconds is transcribed and answered (voice
@@ -434,12 +534,18 @@ async def entrypoint(ctx: agents.JobContext) -> None:
             await ctx.room.local_participant.unpublish_track(voice_publication.sid)
             session.avatar = avatar
             # Avatars ingest at 16k, so re-build the provider at that rate.
+            old_tts = session.tts
             session.tts = make_tts(persona, sample_rate=AVATAR_SAMPLE_RATE)
+            await _aclose_tts(old_tts)
         log.info(
             "avatar active (%s) — audio routed through it at %dHz",
             persona.avatar.provider,
             AVATAR_SAMPLE_RATE,
         )
+        # The rebuilt provider is a fresh client with a cold connection; warm
+        # it like the original so the first post-swap sentence doesn't pay the
+        # handshake. Outside turn_lock — it must never block a pending turn.
+        await session.prewarm_tts()
 
 
 def main() -> None:

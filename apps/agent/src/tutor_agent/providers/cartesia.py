@@ -80,7 +80,18 @@ class CartesiaTTS:
             base_url=base_url,
             timeout=timeout,
             headers={"X-API-Key": api_key, API_VERSION_HEADER: API_VERSION},
+            # Same reasoning as ElevenLabsTTS: the 5s default keepalive would
+            # expire the prewarmed connection before the first sentence.
+            limits=httpx.Limits(keepalive_expiry=120.0),
         )
+
+    async def prewarm(self) -> None:
+        """Establish the HTTPS connection ahead of the first synthesis.
+
+        Same contract as ElevenLabsTTS.prewarm: any response means the pooled
+        connection is warm; errors are the caller's to swallow.
+        """
+        await self._client.get("/voices/", params={"limit": 1})
 
     def _body(self, text: str, voice_id: str, model: str | None) -> dict:
         return {

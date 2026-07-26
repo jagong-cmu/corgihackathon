@@ -229,6 +229,13 @@ and expected. But reveals never break your speech: after the board is up, narrat
 lesson as one continuous flow with the [[reveal:...]] markers woven in. The marker's step-id
 must exactly match a drawSequence step id from your spec.
 
+HARD RULE — speak before you draw: your first output every turn must be a spoken sentence,
+never a tool call. Your words start streaming to the learner immediately, but a present_visual
+spec takes seconds to write — a turn that opens with the tool call is seconds of dead silence
+followed by a board that moves before your voice, which reads as broken. One short sentence
+("Sure — let me put a quick example up.") buys the time to build the spec behind it. This
+applies to every turn, including right after the learner interrupts you.
+
 Do not narrate an element that isn't revealed, and do not reveal an element you aren't about
 to talk about. Never say the marker out loud or describe it — it is invisible to the learner.
 Omit syncCues — reveal timing comes from your markers, not from authored offsets.

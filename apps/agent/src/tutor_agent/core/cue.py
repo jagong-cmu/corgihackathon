@@ -120,6 +120,9 @@ class TurnTimeline:
         self._segments: list[CharacterTimings] = []
         self._next_seq = 0
         self._emitted: set[int] = set()
+        self._presented = False
+        """Whether a present_visual was already anchored this turn — only the
+        FIRST one gets the start-of-turn anchor (see add_action)."""
 
     # -- stream consumption -------------------------------------------------
 
@@ -137,8 +140,17 @@ class TurnTimeline:
         with the cancelled turn, and the learner watches the tutor talk at a
         blank whiteboard). Anchor it to the start of the turn instead; the
         reveal_step cues that actually draw stay narration-anchored.
+
+        Only the FIRST present_visual of the turn gets that anchor: a
+        replacement board mid-turn anchored at 0 would sort BEFORE the first
+        board's reveals in resolve(), clobbering the board the narration is
+        still pointing at in any replay. (The live path emits present_visual
+        via emit_now regardless — this anchor governs the recorded data.)
         """
-        offset = 0 if action.get("type") == "present_visual" else self._char_count
+        is_first_board = action.get("type") == "present_visual" and not self._presented
+        if is_first_board:
+            self._presented = True
+        offset = 0 if is_first_board else self._char_count
         pending = PendingAction(action=action, char_offset=offset, seq=self._next_seq)
         self._next_seq += 1
         self._pending.append(pending)

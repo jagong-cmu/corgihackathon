@@ -72,6 +72,10 @@ class ElevenLabsTTS:
             base_url=base_url,
             timeout=timeout,
             headers={"xi-api-key": api_key},
+            # httpx defaults to keepalive_expiry=5.0, which quietly kills the
+            # prewarmed connection during the learner's join-and-ask window —
+            # prewarm() would warm a socket nothing ever reuses.
+            limits=httpx.Limits(keepalive_expiry=120.0),
         )
 
     def _body(self, text: str, model: str) -> dict:
@@ -79,6 +83,16 @@ class ElevenLabsTTS:
         if self.voice_settings:
             body["voice_settings"] = self.voice_settings
         return body
+
+    async def prewarm(self) -> None:
+        """Establish the HTTPS connection ahead of the first synthesis.
+
+        The first request otherwise pays DNS + TCP + TLS inside the first
+        answer's critical path. Any response at all means the pooled connection
+        is up — the status code is irrelevant, and errors are the caller's to
+        swallow (a failed prewarm costs latency, never the session).
+        """
+        await self._client.get("/user")
 
     # -- blocking -----------------------------------------------------------
 
