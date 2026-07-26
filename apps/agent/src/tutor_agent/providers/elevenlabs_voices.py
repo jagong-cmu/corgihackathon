@@ -98,7 +98,11 @@ class ElevenLabsVoices:
             can_clone_instant=bool(subscription.get("can_use_instant_voice_cloning")),
             can_clone_professional=bool(subscription.get("can_use_professional_voice_cloning")),
             voice_limit=int(subscription.get("voice_limit", 0)),
-            voices_used=len(voices),
+            # "My Voices" includes ElevenLabs' ~21 premade library voices, but
+            # only CUSTOM voices occupy plan slots. Counting everything
+            # reported 24/10 slots on a starter account with 7 real slots
+            # free — and the Tutors panel refused to clone because of it.
+            voices_used=sum(1 for v in voices if v.get("category") != "premade"),
         )
 
     async def list_voices(self) -> list[LibraryVoice]:
