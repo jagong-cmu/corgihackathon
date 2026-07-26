@@ -143,8 +143,9 @@ class TurnTimeline:
 
         Only the FIRST present_visual of the turn gets that anchor: a
         replacement board mid-turn anchored at 0 would sort BEFORE the first
-        board's reveals in resolve() (and fire instantly on the live path),
-        clobbering the board the narration is still pointing at.
+        board's reveals in resolve(), clobbering the board the narration is
+        still pointing at in any replay. (The live path emits present_visual
+        via emit_now regardless — this anchor governs the recorded data.)
         """
         is_first_board = action.get("type") == "present_visual" and not self._presented
         if is_first_board:
@@ -154,6 +155,19 @@ class TurnTimeline:
         self._next_seq += 1
         self._pending.append(pending)
         return pending
+
+    def emit_now(self, pending: PendingAction) -> TimedAction:
+        """Resolve `pending` to cue 0 immediately and mark it emitted.
+
+        For actions that wait on no narration (present_visual mounts the
+        board with every step hidden). resolve_ready only releases an action
+        once its segment's timings land, which for the turn's first action
+        means after the whole first sentence has synthesized — dead seconds
+        during which the learner stares at an empty board. Marking the seq
+        emitted keeps resolve_ready/resolve_remaining from sending it twice.
+        """
+        self._emitted.add(pending.seq)
+        return TimedAction(action=pending.action, seq=pending.seq, cue_ms=0)
 
     def attach_timings(self, timings: CharacterTimings) -> None:
         """Attach timings for the next speech segment, in synthesis order."""

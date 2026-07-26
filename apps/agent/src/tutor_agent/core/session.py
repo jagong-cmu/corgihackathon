@@ -37,7 +37,8 @@ from ..providers.base import (
 from .channel import ChannelAdapter
 from .chunking import SentenceChunker
 from .cue import CharacterTimings, CueQueue, TimedAction, TurnTimeline, synthetic_timings
-from .protocol import WHITEBOARD_ACTIONS, canvas_tool_definitions, validate_action
+from .markers import RevealMarker, RevealMarkerScanner
+from .protocol import canvas_tool_definitions, validate_action
 
 log = logging.getLogger(__name__)
 
@@ -183,8 +184,15 @@ class TutorSession:
         # AFTER preempt() took the "unspoken" path, flipping _active_turn_spoke.
         self._transcript_folded = False
         toolset = self.config.toolset
+        # The whiteboard toolset offers ONE tool. present_visual needs the
+        # tool round trip (a big spec, and validation errors must flow back
+        # as tool_results). Reveals do not: they ride inline in the speech as
+        # [[reveal:step-id]] markers, because a reveal_step TOOL call ends
+        # the model's message and costs a full API round trip of dead air
+        # per narration beat. The reveal_step WIRE action is unchanged — the
+        # session converts markers into it (see markers.py).
         self._tools = canvas_tool_definitions(
-            only=WHITEBOARD_ACTIONS if toolset == "whiteboard" else None
+            only=("present_visual",) if toolset == "whiteboard" else None
         )
 
         # Stable for the whole session, so it sits ahead of the cache breakpoint.
@@ -331,12 +339,49 @@ class TutorSession:
             min_chars=self.config.min_sentence_chars,
             max_chars=self.config.max_sentence_chars,
         )
+        scanner = RevealMarkerScanner()
         streams_audio = self.channel.capabilities.streams_audio
         dropped: list[tuple[str, list[str]]] = []
         stop_reason = "end_turn"
         llm_first_token_ms: float | None = None
         self._first_audio_at = None
         started = time.perf_counter()
+        # Reveal bookkeeping for the safety net at the end of the turn: which
+        # steps the presented spec promises, and which actually revealed.
+        presented_step_ids: list[str] = []
+        revealed_step_ids: set[str] = set()
+
+        async def speak_clean(text: str) -> None:
+            """Marker-free speech: into the transcript, and out as audio.
+
+            First-audio is stamped in _push_audio (the first audible chunk),
+            not here — synthesis completion overstates what the learner waits.
+            """
+            timeline.add_text(text)
+            if not streams_audio:
+                return
+            # Synthesize each sentence the moment it completes rather than
+            # waiting for the whole turn. This is the difference between
+            # ~7s and ~1s to first audio.
+            for sentence in chunker.feed(text):
+                if not self._cues.should_emit(turn_id):
+                    return
+                await self._speak_segment(sentence, timeline)
+                await self._emit(turn_id, timeline.resolve_ready())
+
+        def add_reveal(step_id: str) -> None:
+            errors = validate_action("reveal_step", {"stepId": step_id})
+            if errors:
+                dropped.append(("reveal_step", errors))
+                log.warning(
+                    "dropping invalid reveal %r in %s: %s",
+                    step_id,
+                    turn_id,
+                    "; ".join(errors),
+                )
+                return
+            timeline.add_action({"type": "reveal_step", "stepId": step_id})
+            revealed_step_ids.add(step_id)
 
         def _cancelled_result() -> TurnResult:
             # Every cancelled exit funnels through here; these fields were
@@ -382,17 +427,18 @@ class TutorSession:
                 if isinstance(event, TextDelta):
                     if llm_first_token_ms is None:
                         llm_first_token_ms = (time.perf_counter() - started) * 1000
-                    timeline.add_text(event.text)
-                    if not streams_audio:
-                        continue
-                    # Synthesize each sentence the moment it completes rather
-                    # than waiting for the whole turn. This is the difference
-                    # between ~7s and ~1s to first audio.
-                    for sentence in chunker.feed(event.text):
+                    # Reveals ride inline as [[reveal:step-id]] markers so the
+                    # narration is ONE continuous stream — a reveal_step tool
+                    # call would end the message and cost a full API round trip
+                    # of silence per beat. The scanner strips markers from the
+                    # spoken text and anchors each at the character it occupied.
+                    for piece in scanner.feed(event.text):
+                        if isinstance(piece, RevealMarker):
+                            add_reveal(piece.step_id)
+                        else:
+                            await speak_clean(piece)
                         if not self._cues.should_emit(turn_id):
                             break
-                        await self._speak_segment(sentence, timeline)
-                        await self._emit(turn_id, timeline.resolve_ready())
 
                 elif isinstance(event, ToolCall):
                     # A tool call ends the model's message, so whatever speech
@@ -424,13 +470,36 @@ class TutorSession:
                             "; ".join(errors),
                         )
                         continue
-                    timeline.add_action({"type": event.name, **event.input})
-                    # An action whose anchor is already inside synthesized
-                    # speech (present_visual anchors at 0) must go out NOW —
-                    # riding the next sentence's flush delays the board mount
-                    # by a whole synthesis, and a barge-in in that window
-                    # kills it entirely.
-                    await self._emit(turn_id, timeline.resolve_ready())
+                    pending = timeline.add_action({"type": event.name, **event.input})
+                    if event.name == "present_visual":
+                        # The board mount waits on no narration (cue 0), so send
+                        # it the moment the model authors it. resolve_ready would
+                        # hold it until the first sentence's synthesis lands
+                        # timings — seconds of an empty board for no reason.
+                        await self._emit(turn_id, [timeline.emit_now(pending)])
+                        spec = event.input.get("spec")
+                        steps = spec.get("drawSequence", []) if isinstance(spec, dict) else []
+                        presented_step_ids = [
+                            s["id"]
+                            for s in steps
+                            if isinstance(s, dict) and isinstance(s.get("id"), str)
+                        ]
+                        # A re-present replaces the whole board; prior reveals
+                        # belong to the dead spec.
+                        revealed_step_ids = set()
+                    else:
+                        if event.name == "reveal_step":
+                            # Tool-based reveals still work (older prompts,
+                            # model habit) — track them so the safety net
+                            # stays accurate.
+                            step_id = event.input.get("stepId")
+                            if isinstance(step_id, str):
+                                revealed_step_ids.add(step_id)
+                        # An action whose anchor already sits inside
+                        # synthesized speech must go out NOW — riding the next
+                        # sentence's flush delays it by a whole synthesis, and
+                        # a barge-in in that window kills it entirely.
+                        await self._emit(turn_id, timeline.resolve_ready())
 
                 elif isinstance(event, TurnEnd):
                     stop_reason = event.stop_reason
@@ -451,6 +520,17 @@ class TutorSession:
         if not self._cues.should_emit(turn_id):
             return _cancelled_result()
 
+        # The scanner may hold text that never resolved into a marker: a lone
+        # '[' is prose and gets spoken; an incomplete marker fragment is
+        # dropped — "[[reveal:ax" read aloud is worse than losing it.
+        scanner_tail, dropped_fragment = scanner.flush()
+        if dropped_fragment:
+            log.warning(
+                "turn %s ended mid-marker %r — dropped", turn_id, dropped_fragment
+            )
+        if scanner_tail:
+            await speak_clean(scanner_tail)
+
         # Flush the tail of the last sentence, which never got a terminator.
         if streams_audio:
             tail = chunker.flush()
@@ -465,6 +545,21 @@ class TutorSession:
         # point would emit the very fragment the interruption dropped.
         if not self._cues.should_emit(turn_id):
             return _cancelled_result()
+
+        # Safety net: a presented spec whose steps never revealed leaves a
+        # mounted-but-blank board — worse than late reveals. Any step the
+        # model forgot (misspelled marker, wandered turn) draws at the end
+        # of the audio.
+        missing = [s for s in presented_step_ids if s not in revealed_step_ids]
+        if missing:
+            log.warning(
+                "turn %s left %d step(s) unrevealed (%s) — revealing at end of audio",
+                turn_id,
+                len(missing),
+                ", ".join(missing),
+            )
+            for step_id in missing:
+                timeline.add_action({"type": "reveal_step", "stepId": step_id})
 
         # Anything anchored past the end of speech fires at the end of audio.
         await self._emit(turn_id, timeline.resolve_remaining())

@@ -132,6 +132,31 @@ class TestValidation:
         assert result.dropped_actions[0][0] == "summon_demon"
         assert adapter.frames == []
 
+    async def test_invalid_action_reports_error_back_to_the_model(self):
+        # The provider turns ToolCall.error into an is_error tool_result. A
+        # success stub here is how "invalid present_visual" became "the tutor
+        # narrates a lesson at a blank board": the model never learned its
+        # spec was dropped, so it revealed steps nobody could see.
+        session, _ = _session(
+            [
+                ScriptedTurn(
+                    events=[
+                        "Watch. ",
+                        ("equation", {"x": 10}),  # missing required y, id, latex
+                        ("new_section", {"title": "Fine"}),
+                    ]
+                )
+            ]
+        )
+
+        await session.handle_transcript("go")
+
+        bad, good = session.llm.tool_events
+        assert bad.name == "equation"
+        assert bad.error is not None and "never reached the board" in bad.error
+        assert good.name == "new_section"
+        assert good.error is None
+
     async def test_valid_actions_survive_alongside_invalid_ones(self):
         session, adapter = _session(
             [
@@ -149,6 +174,123 @@ class TestValidation:
         result = await session.handle_transcript("go")
         assert len(result.dropped_actions) == 1
         assert [f["action"]["type"] for f in adapter.frames] == ["new_section", "camera"]
+
+
+def _visual_input(step_ids=("s1", "s2")):
+    """A schema-valid present_visual tool input."""
+    return {
+        "id": "vis_1",
+        "spec": {
+            "specVersion": 1,
+            "track": "deterministic",
+            "primitive": "equation",
+            "content": {"tex": "a^2 + b^2 = c^2"},
+            "drawSequence": [
+                {"id": s, "element": "equation", "durationMs": 600} for s in step_ids
+            ],
+        },
+    }
+
+
+class TestRevealMarkers:
+    """Reveals ride inline in the narration — no tool round trip per beat."""
+
+    async def test_markers_become_reveal_frames_and_never_reach_speech(self):
+        session, adapter = _session(
+            [
+                ScriptedTurn(
+                    events=[
+                        "Alright, the theorem. ",
+                        ("present_visual", _visual_input()),
+                        "[[reveal:s1]] First the square. [[reveal:s2]] Then the proof.",
+                    ]
+                )
+            ]
+        )
+
+        result = await session.handle_transcript("go")
+
+        kinds = [f["action"]["type"] for f in adapter.frames]
+        assert kinds == ["present_visual", "reveal_step", "reveal_step"]
+        assert [f["action"].get("stepId") for f in adapter.frames[1:]] == ["s1", "s2"]
+        # Markers are stripped from everything spoken and remembered.
+        assert "[[" not in result.speech_text
+        assert all("[[" not in s for s in session.tts.synthesized)
+        # Reveals anchor to the narration in order.
+        reveal_cues = [f["cueMs"] for f in adapter.frames[1:]]
+        assert reveal_cues == sorted(reveal_cues)
+
+    async def test_marker_split_across_deltas_still_fires(self):
+        # delta_chars=5 slices "[[reveal:s1]]" across several stream events.
+        session, adapter = _session(
+            [
+                ScriptedTurn(
+                    events=[
+                        "Watch this. ",
+                        ("present_visual", _visual_input(("s1",))),
+                        "[[reveal:s1]] Here it is, drawn while I talk about it.",
+                    ]
+                )
+            ]
+        )
+        session.llm._delta_chars = 5
+
+        result = await session.handle_transcript("go")
+
+        kinds = [f["action"]["type"] for f in adapter.frames]
+        assert kinds == ["present_visual", "reveal_step"]
+        assert "[[" not in result.speech_text
+
+    async def test_present_visual_frame_is_sent_immediately_and_once(self):
+        session, adapter = _session(
+            [
+                ScriptedTurn(
+                    events=[
+                        "Okay. ",
+                        ("present_visual", _visual_input(("s1",))),
+                        "[[reveal:s1]] There.",
+                    ]
+                )
+            ]
+        )
+
+        await session.handle_transcript("go")
+
+        visuals = [f for f in adapter.frames if f["action"]["type"] == "present_visual"]
+        assert len(visuals) == 1
+        assert visuals[0]["cueMs"] == 0
+        # It went out before the narration's reveal, not after synthesis of
+        # the whole turn.
+        assert adapter.frames[0]["action"]["type"] == "present_visual"
+
+    async def test_forgotten_steps_reveal_at_end_of_audio(self):
+        # The model presents three steps but only narrates one — the safety
+        # net draws the rest at the end instead of leaving a skeleton board.
+        session, adapter = _session(
+            [
+                ScriptedTurn(
+                    events=[
+                        "Quick sketch. ",
+                        ("present_visual", _visual_input(("s1", "s2", "s3"))),
+                        "[[reveal:s1]] Just this part for now.",
+                    ]
+                )
+            ]
+        )
+
+        await session.handle_transcript("go")
+
+        revealed = [
+            f["action"]["stepId"]
+            for f in adapter.frames
+            if f["action"]["type"] == "reveal_step"
+        ]
+        assert revealed == ["s1", "s2", "s3"]
+
+    async def test_no_safety_net_without_a_presented_visual(self):
+        session, adapter = _session([ScriptedTurn(events=["Hi there, just chatting."])])
+        await session.handle_transcript("hello")
+        assert adapter.frames == []
 
 
 class TestBargeIn:
@@ -418,8 +560,10 @@ class TestPromptAssembly:
         assert call["messages"][-1]["content"] == "hello"
 
     async def test_whiteboard_tools_are_attached_by_default(self):
-        """The default toolset drives the Chalk VisualSpec renderer — the only
-        client wired to the data channel — so those are the only tools offered."""
+        """The default toolset offers present_visual ONLY. Reveals ride inline
+        as [[reveal:...]] markers — a reveal_step TOOL would end the message
+        and cost a round trip of dead air per narration beat, so it is not
+        offered even though the wire action still exists."""
         llm = FakeLLM([ScriptedTurn(events=["Ok."])])
         session = TutorSession(
             persona=_persona(), llm=llm, tts=FakeTTS(), channel=RecordingAdapter()
@@ -427,7 +571,7 @@ class TestPromptAssembly:
         await session.handle_transcript("hi")
 
         names = {t["name"] for t in llm.calls[0]["tools"]}
-        assert names == {"present_visual", "reveal_step"}
+        assert names == {"present_visual"}
         assert all(t["eager_input_streaming"] for t in llm.calls[0]["tools"])
 
     async def test_canvas_toolset_opts_into_the_tldraw_actions(self):
