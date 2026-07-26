@@ -83,6 +83,7 @@ export const BUILTIN_TUTORS: TutorOption[] = [
   { id: "nico", name: "Nico", hasVoice: true, avatarProvider: "lemonslice", photoUrl: null },
   { id: "ada", name: "Ada", hasVoice: true, avatarProvider: "lemonslice", photoUrl: null },
   { id: "coach-rios", name: "Coach Rios", hasVoice: true, avatarProvider: "lemonslice", photoUrl: null },
+  { id: "aayush", name: "Aayush", hasVoice: true, avatarProvider: "lemonslice", photoUrl: null },
 ];
 
 const BASE = "/tutor-api";

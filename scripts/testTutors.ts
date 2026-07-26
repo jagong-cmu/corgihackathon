@@ -41,7 +41,7 @@ function check(name: string, cond: boolean, detail?: string) {
 {
   delete process.env.TUTOR_LIBRARY;
   const defaults = liveTutorLibrary();
-  for (const id of ["ada", "coach-rios", "nico"]) {
+  for (const id of ["ada", "coach-rios", "nico", "aayush"]) {
     check(`default library includes ${id}`, defaults.some((t) => t.id === id));
   }
 
@@ -146,7 +146,7 @@ async function main() {
     const body = (await res.json()) as { tutors?: { id: string; name: string }[] };
     check("response has a tutors array", Array.isArray(body.tutors));
     const served = new Set((body.tutors ?? []).map((t) => t.id));
-    for (const id of ["ada", "coach-rios", "nico"]) {
+    for (const id of ["ada", "coach-rios", "nico", "aayush"]) {
       check(`prod server serves ${id}`, served.has(id));
     }
     check(

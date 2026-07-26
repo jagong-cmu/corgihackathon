@@ -24,6 +24,7 @@ const DEFAULT_LIVE_TUTORS: LiveTutorOption[] = [
   { id: "coach-rios", name: "Coach Rios", hasVoice: true, avatarProvider: "lemonslice" },
   // Custom tutors that live in the demo team's persona store:
   { id: "nico", name: "Nico", hasVoice: true, avatarProvider: "lemonslice" },
+  { id: "aayush", name: "Aayush", hasVoice: true, avatarProvider: "lemonslice" },
 ];
 
 export function liveTutorLibrary(): LiveTutorOption[] {
