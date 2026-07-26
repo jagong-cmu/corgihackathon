@@ -15,7 +15,10 @@ every step hidden) and `reveal_step` (draw one step on). Each action carries a
 `cueMs` derived from real TTS character timestamps; the client holds it in a
 cue queue clocked off the tutor's own audio element (`src/live/cueBridge.ts`)
 and applies it the moment the narration reaches it — so the drawing lands on
-the words it belongs to, even if the stream stalls. The worker defaults to
+the words it belongs to, even if the stream stalls. The one exception: the
+first `present_visual` of a turn ships at cue 0, so the board mounts the
+moment the tutor decides to draw and a barge-in can't kill a still-pending
+board (`reveal_step` cues stay narration-anchored). The worker defaults to
 this toolset; set `TUTOR_TOOLSET=canvas` to target the tldraw client instead.
 The renderer itself (`src/render/`, `src/spec/`) is unchanged — the voice path
 simply calls the `revealStep` seam the whiteboard always exposed.
