@@ -1,0 +1,66 @@
+name: tutor
+
+services:
+  # Postgres 16 with pgvector available. Enabled in 0001 even though doc_chunks
+  # is deferred to Phase 4, so adding retrieval later is a table, not an ops task.
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-tutor}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-tutor}
+      POSTGRES_DB: ${POSTGRES_DB:-tutor}
+      # Every timestamp in this schema is timestamptz; pinning the server to UTC
+      # keeps psql output and any naive client honest.
+      TZ: UTC
+      PGTZ: UTC
+    command:
+      - postgres
+      - -c
+      - timezone=UTC
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-tutor} -d ${POSTGRES_DB:-tutor}"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    restart: unless-stopped
+
+  # Runs to completion on `docker compose up`, then exits. Uses the same image as
+  # the server, so it needs no build and no psql on the host.
+  migrate:
+    image: pgvector/pgvector:pg16
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-tutor}:${POSTGRES_PASSWORD:-tutor}@postgres:5432/${POSTGRES_DB:-tutor}
+    volumes:
+      - ./migrations:/infra/migrations:ro
+      - ./scripts:/infra/scripts:ro
+    entrypoint: ["bash", "/infra/scripts/migrate.sh"]
+    command: ["up"]
+    restart: "no"
+
+  # Not started by `docker compose up` — run it with:
+  #   docker compose --profile tools run --rm seed
+  # Mounts the repo read-only so it can import PersonaSpec and read the YAML
+  # personas from apps/agent, which this session does not own and never writes.
+  seed:
+    profiles: ["tools"]
+    build:
+      context: ..
+      dockerfile: infra/docker/seed.Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-tutor}:${POSTGRES_PASSWORD:-tutor}@postgres:5432/${POSTGRES_DB:-tutor}
+    volumes:
+      - ..:/repo:ro
+    restart: "no"
+
+volumes:
+  pgdata:

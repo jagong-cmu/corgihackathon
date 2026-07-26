@@ -1,0 +1,46 @@
+from .loader import PersonaNotFoundError, get_persona, load_persona_dir, load_persona_file
+from .prompt import (
+    VOICE_AND_CANVAS_RULES,
+    build_few_shot_messages,
+    build_persona_prompt,
+    build_system_prompt,
+    estimate_prompt_overhead,
+)
+from .spec import (
+    AvatarConfig,
+    Consent,
+    Exchange,
+    Identity,
+    Level,
+    Pedagogy,
+    PersonaKind,
+    PersonaSpec,
+    Speech,
+    TeachingStyle,
+    Verbosity,
+    VoiceConfig,
+)
+
+__all__ = [
+    "AvatarConfig",
+    "Consent",
+    "Exchange",
+    "Identity",
+    "Level",
+    "Pedagogy",
+    "PersonaKind",
+    "PersonaNotFoundError",
+    "PersonaSpec",
+    "Speech",
+    "TeachingStyle",
+    "VOICE_AND_CANVAS_RULES",
+    "Verbosity",
+    "VoiceConfig",
+    "build_few_shot_messages",
+    "build_persona_prompt",
+    "build_system_prompt",
+    "estimate_prompt_overhead",
+    "get_persona",
+    "load_persona_dir",
+    "load_persona_file",
+]

@@ -1,16 +1,23 @@
 {
-  "name": "corgihackathon-whiteboard",
+  "name": "tutor",
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "description": "Visual/animation subsystem for an AI voice tutor. Renders a versioned Visual Spec (JSON) as draw-on whiteboard animations.",
+  "description": "AI voice tutor. The repo root hosts the whiteboard app (Visual Spec renderer); the voice agent, API, shared protocol, and debug tooling live in the apps/, packages/, and tools/ workspaces.",
+  "workspaces": [
+    "apps/*",
+    "packages/*",
+    "tools/*"
+  ],
   "scripts": {
     "dev": "vite --host",
     "build": "tsc -b && vite build",
     "preview": "vite preview --host",
     "typecheck": "tsc -b --noEmit false",
     "test:spec": "tsx scripts/testSpec.ts",
-    "test:rag": "tsx scripts/testRag.ts"
+    "test:rag": "tsx scripts/testRag.ts",
+    "build:workspaces": "npm run build --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.115.0",
