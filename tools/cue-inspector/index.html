@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>cue inspector</title>
+    <link rel="stylesheet" href="/src/styles.css" />
+  </head>
+  <body>
+    <header>
+      <h1>cue inspector</h1>
+      <p class="sub">
+        Canvas action timing measured against real audio playback. Debug harness — not the
+        whiteboard.
+      </p>
+      <div class="clock-readout">
+        <span id="clock-source">no clock</span>
+        <strong id="clock-pos">0 ms</strong>
+      </div>
+    </header>
+
+    <section class="controls">
+      <fieldset>
+        <legend>LiveKit room</legend>
+        <label>
+          room
+          <input id="room-name" type="text" value="cue-inspector" spellcheck="false" />
+        </label>
+        <button id="connect">connect</button>
+        <button id="disconnect" disabled>disconnect</button>
+        <span id="status" class="status idle">idle</span>
+      </fieldset>
+
+      <fieldset>
+        <legend>Fixture replay (no credentials needed)</legend>
+        <label>
+          fixture
+          <select id="fixture"></select>
+        </label>
+        <label>
+          delivery
+          <select id="mode">
+            <option value="burst">burst (agent-realistic)</option>
+            <option value="streamed">streamed</option>
+          </select>
+        </label>
+        <label>
+          jitter ms
+          <input id="jitter" type="number" min="0" max="2000" step="25" value="0" />
+        </label>
+        <label>
+          barge-in at ms
+          <input id="barge-in" type="number" min="0" step="500" placeholder="off" />
+        </label>
+        <button id="replay">run local replay</button>
+        <button id="stop-replay" disabled>stop</button>
+      </fieldset>
+
+      <fieldset>
+        <legend>Robustness</legend>
+        <button id="malformed">inject malformed frames</button>
+        <button id="clear">clear table</button>
+      </fieldset>
+    </section>
+
+    <audio id="audio" controls></audio>
+
+    <div id="turns" class="turns"></div>
+    <div id="summary" class="summary"></div>
+    <main id="table-root"></main>
+
+    <section class="log-panel">
+      <h2>log</h2>
+      <div id="log" class="log"></div>
+    </section>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
