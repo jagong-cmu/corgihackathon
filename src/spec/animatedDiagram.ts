@@ -249,7 +249,7 @@ export const ANIMATED_DIAGRAM_PROMPT: string = `- A concept, physics, or process
       "caption"?: string
     }
   ELEMENT KINDS:
-    - "icon" — ONE emoji drawn at "at" (set "size" ~10-16). THIS is how you make the scene look like the topic. Use a real-object emoji: 🏀 basketball, ⚽ ball, 🏀🧑 player, 🚗 car, 🚀 rocket, 🪝/⚙️ machine, 💧 water, ☀️ sun, ☁️ cloud, 🧲 magnet, 💡 idea, 📈 graph, 🎯 target. Give an icon a "moveTo" to make it travel/accelerate.
+    - "icon" — ONE emoji drawn at "at" (set "size" ~10-16). THIS is how you make the scene look like the topic. Use a real-object emoji: 🏀 basketball, ⚽ ball, 🏀🧑 player, 🚗 car, 🚀 rocket, 🪝/⚙️ machine, 💧 water, ☀️ sun, ☁️ cloud, 🦲 magnet, 💡 idea, 📈 graph, 🎯 target. Give an icon a "moveTo" to make it travel/accelerate.
     - "label" — short text at "at" ("size" ~5-8, default 5.5). "arrow"/"line" — from→to, grows on; put a short "text" on it to name the force/flow. "ball" — plain filled circle (only when a generic dot is truly best). "box" — outlined rectangle ("w","h"). "dot" — small marker ("r").
   MOTION: any element with "at" may add "moveTo" — it EASES from "at" to "moveTo" as its step plays. This is the whole point: use it to SHOW the idea happening (the ball accelerates across, the price slides to where the lines cross, water rises).
   MATCH THE STUDENT'S FRAMING — non-negotiable: if they ask for it "in basketball terms", the scene MUST be basketball — a 🏀 a 🧑 pushes/shoots, labels in that language ("your push", "the shot", "the hoop"). NEVER answer a themed request with a generic gray ball. Pick icons and words from the exact context they gave.

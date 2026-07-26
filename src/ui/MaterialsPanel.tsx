@@ -12,18 +12,18 @@ import { ingestFiles, getMaterials, type Material } from "../api";
 const S: Record<string, React.CSSProperties> = {
   wrap: {
     position: "fixed",
-    right: 18,
-    bottom: 18,
-    width: 320,
+    right: 20,
+    bottom: 20,
+    width: 316,
     zIndex: 9999,
-    fontFamily: 'ui-sans-serif, system-ui, "Space Grotesk", sans-serif',
-    color: "#2c2723",
+    fontFamily: '"Space Grotesk", ui-sans-serif, system-ui, sans-serif',
+    color: "#2c2620",
   },
   card: {
-    background: "#fbf7ef",
-    border: "1px solid #e7ddcc",
-    borderRadius: 14,
-    boxShadow: "0 2px 4px rgba(60,45,25,.08), 0 18px 44px rgba(70,50,20,.18)",
+    background: "#fbf6ec",
+    border: "1px solid #e8dcc7",
+    borderRadius: 16,
+    boxShadow: "0 2px 4px rgba(50,35,15,.10), 0 24px 56px rgba(60,40,15,.22)",
     overflow: "hidden",
   },
   header: {
@@ -31,13 +31,21 @@ const S: Record<string, React.CSSProperties> = {
     alignItems: "center",
     justifyContent: "space-between",
     gap: 8,
-    padding: "11px 14px",
-    background: "#f3ead9",
-    borderBottom: "1px solid #e7ddcc",
+    padding: "13px 16px",
+    background: "linear-gradient(180deg, #fffefb, #f6efe1)",
+    borderBottom: "1px solid #eee2cf",
     cursor: "pointer",
     userSelect: "none",
   },
-  title: { fontWeight: 700, fontSize: 13, letterSpacing: ".01em" },
+  title: {
+    display: "flex",
+    alignItems: "center",
+    gap: 8,
+    fontWeight: 600,
+    fontSize: 13,
+    letterSpacing: ".01em",
+    color: "#29201a",
+  },
   body: { padding: 14, display: "flex", flexDirection: "column", gap: 10 },
   uploadBtn: {
     display: "inline-flex",
@@ -81,7 +89,7 @@ const S: Record<string, React.CSSProperties> = {
 };
 
 export function MaterialsPanel() {
-  const [open, setOpen] = useState(true);
+  const [open, setOpen] = useState(false);
   const [materials, setMaterials] = useState<Material[]>([]);
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState("");
@@ -126,11 +134,42 @@ export function MaterialsPanel() {
   );
 
   return (
-    <div style={S.wrap}>
+    <div style={S.wrap} className="materials-fab">
       <div style={S.card}>
         <div style={S.header} onClick={() => setOpen((o) => !o)}>
-          <span style={S.title}>📄 Materials — ground answers (RAG)</span>
-          <span style={{ fontSize: 12, color: "#9a8f80" }}>{open ? "▾" : "▸"}</span>
+          <span style={S.title}>
+            <span
+              style={{
+                display: "inline-grid",
+                placeItems: "center",
+                width: 22,
+                height: 22,
+                borderRadius: 7,
+                background: "#fbe7cf",
+                border: "1px solid #f0d3ac",
+                fontSize: 12,
+              }}
+            >
+              📎
+            </span>
+            Lesson materials
+            {materials.length > 0 && (
+              <span
+                style={{
+                  fontSize: 10,
+                  fontWeight: 700,
+                  color: "#9a4f16",
+                  background: "#fbe7cf",
+                  border: "1px solid #f0d3ac",
+                  borderRadius: 999,
+                  padding: "1px 7px",
+                }}
+              >
+                {materials.length}
+              </span>
+            )}
+          </span>
+          <span style={{ fontSize: 12, color: "#9c9080" }}>{open ? "▾" : "▸"}</span>
         </div>
 
         {open && (

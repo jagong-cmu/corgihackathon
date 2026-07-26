@@ -1,0 +1,72 @@
+/* Shell chrome added alongside the sidebar + generic UI. Kept in its own file
+   so it never collides with concurrent index.css edits. */
+
+/* header left group + hamburger */
+.header-left { display: flex; align-items: center; gap: 14px; }
+.hamburger {
+  display: inline-flex; flex-direction: column; justify-content: center; gap: 4px;
+  width: 44px; height: 44px; padding: 0 11px; flex: none;
+  border-radius: 13px;
+  border: 1px solid var(--edge);
+  background: linear-gradient(180deg, #fffefb, var(--paper));
+  box-shadow: var(--sh-1), inset 0 1px 0 rgba(255, 255, 255, .7);
+  cursor: pointer;
+  transition: transform .12s ease, box-shadow .18s ease;
+}
+.hamburger:hover { transform: translateY(-1px); box-shadow: var(--sh-2); }
+.hamburger:active { transform: translateY(0); }
+.hamburger span { height: 2.5px; border-radius: 3px; background: var(--espresso); display: block; }
+.hamburger span:nth-child(2) { opacity: .8; }
+
+/* generic starter prompts (replace the demo-specific scene switcher) */
+.starter-row { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; }
+.starter-label {
+  font: 600 10px var(--sans); text-transform: uppercase; letter-spacing: .14em;
+  color: var(--ink-3); margin-right: 2px;
+}
+.starter-chip {
+  font: 500 13px var(--sans); color: var(--ink);
+  padding: 8px 14px; border-radius: 999px;
+  border: 1px solid var(--edge);
+  background: linear-gradient(180deg, #fffefb, var(--paper));
+  box-shadow: var(--sh-1);
+  cursor: pointer; white-space: nowrap;
+  transition: transform .12s ease, box-shadow .18s ease, border-color .18s ease, color .18s ease;
+}
+.starter-chip:hover {
+  transform: translateY(-1px); box-shadow: var(--sh-2);
+  border-color: var(--corgi); color: var(--corgi-ink);
+}
+.starter-chip:disabled { opacity: .5; cursor: default; transform: none; }
+
+/* blank-canvas empty state on the whiteboard */
+.board-empty {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  height: 100%; gap: 16px; padding: 40px; text-align: center;
+  animation: board-empty-in .5s ease both;
+}
+.board-empty-mark {
+  width: 66px; height: 66px; border-radius: 20px;
+  display: grid; place-items: center;
+  background: var(--corgi-wash); border: 1px solid #f0d3ac;
+  color: var(--corgi-deep);
+  box-shadow: var(--sh-1);
+}
+.board-empty-mark svg { width: 32px; height: 32px; }
+.board-empty h2 {
+  margin: 0; font-family: var(--serif); font-weight: 600; font-size: 25px;
+  letter-spacing: -.01em; color: var(--espresso);
+}
+.board-empty p { margin: 0; max-width: 44ch; color: var(--ink-2); font-size: 15px; line-height: 1.5; }
+@keyframes board-empty-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+
+/* custom-photo avatar placement inside existing round/stage contexts */
+.facecam-bubble .avatar-photo {
+  position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  border: 0; box-shadow: none; width: 100% !important; height: 100% !important;
+}
+.tutor-avatar .avatar-photo { align-self: end; }
+
+@media (prefers-reduced-motion: reduce) {
+  .board-empty { animation: none; }
+}
