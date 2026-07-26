@@ -1,74 +1,35 @@
 /**
- * LiveTutorStage — the tutor's side of the desk, now live.
+ * LiveTutorStage — the tutor's presence in the left-column card.
  *
- * Replaces the "Voice · coming soon" placeholder in TutorShell's left column.
- * Idle: pick a tutor and start a session. Live: the avatar's face (when the
- * persona has one) or a speaking orb, plus mic + end-session controls.
+ * One tutor, one card: idle it shows the active tutor (Trudy, a created tutor,
+ * or a persona from the API) with the "now saying" line; connecting/live the
+ * SAME spot becomes the live session — the avatar's face (or a speaking orb)
+ * replaces the still avatar instead of squeezing in beside it.
  *
- * Persona options come from the persona API (custom tutors) and fall back to
- * the built-in YAML personas when the API isn't running, mirroring exactly
- * what the agent worker itself can load.
+ * Picking a tutor in the dropdown makes that tutor the active one everywhere
+ * (card, greeting, sidebar checkmark) via TutorContext; the roster and the
+ * session picker were merged when created tutors got cloned voices.
+ *
+ * Session state itself lives in LiveTutorProvider (App-level), so this
+ * component rendering or not never affects a running session's audio.
  */
-import { useEffect, useRef, useState } from "react";
-import { useLiveTutor } from "./useLiveTutor";
-import {
-  BUILTIN_TUTORS,
-  listDeployedTutors,
-  listTutors,
-  toOption,
-  tutorApiAvailable,
-  type TutorOption,
-} from "../tutorApi";
+import { useEffect, useRef } from "react";
+import { useLiveTutorContext } from "./LiveTutorContext";
+import { useTutors } from "../tutors/TutorContext";
+import { Avatar } from "../ui/Avatar";
 
 interface Props {
-  /** Bump to re-fetch tutor options (e.g. after creating one in the panel). */
-  refresh?: number;
-  /** Open the voice-tutor manager (create/voice/avatar), when the host has one. */
-  onManage?: () => void;
+  /** The line the tutor is speaking on the whiteboard side (idle only). */
+  idleSpeech: string;
+  /** "Ready to teach" / "Thinking…" — the ask-bar's voice status (idle only). */
+  idleVoiceLabel: string;
 }
 
-export function LiveTutorStage({ refresh = 0, onManage }: Props) {
-  const { state, start, end, toggleMic } = useLiveTutor();
-  const [options, setOptions] = useState<TutorOption[]>(BUILTIN_TUTORS);
-  const [selected, setSelected] = useState<string>(BUILTIN_TUTORS[0].id);
-  const [configured, setConfigured] = useState<boolean | null>(null);
+export function LiveTutorStage({ idleSpeech, idleVoiceLabel }: Props) {
+  const { live, options, configured } = useLiveTutorContext();
+  const { tutors, activeTutor, setActiveTutor, openManage } = useTutors();
+  const { state, start, end, toggleMic } = live;
   const videoRef = useRef<HTMLVideoElement>(null);
-
-  // LiveKit configured on this host?
-  useEffect(() => {
-    let cancelled = false;
-    fetch("/api/live/health")
-      .then((r) => r.json())
-      .then((b) => !cancelled && setConfigured(Boolean(b.configured)))
-      .catch(() => !cancelled && setConfigured(false));
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  // Tutor options, best source first: the persona API (full local stack),
-  // then the deployed /api/live/tutors list (serverless), built-ins as floor.
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      if (await tutorApiAvailable()) {
-        try {
-          const fromApi = (await listTutors()).map(toOption);
-          if (cancelled || !fromApi.length) return;
-          const seen = new Set(fromApi.map((t) => t.id));
-          setOptions([...fromApi, ...BUILTIN_TUTORS.filter((t) => !seen.has(t.id))]);
-          return;
-        } catch {
-          /* API up but listing failed (e.g. DB down) — try the next tier */
-        }
-      }
-      const deployed = await listDeployedTutors();
-      if (!cancelled && deployed) setOptions(deployed);
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [refresh]);
 
   // Show the avatar's face the moment its video track arrives.
   useEffect(() => {
@@ -81,16 +42,25 @@ export function LiveTutorStage({ refresh = 0, onManage }: Props) {
     };
   }, [state.videoTrack]);
 
-  const active = options.find((t) => t.id === (state.persona ?? selected));
-  const name = active?.name ?? state.persona ?? selected;
+  const personaId = activeTutor.personaId ?? "";
+  const selectedOption = options.find((t) => t.id === personaId);
+  const liveOption = options.find((t) => t.id === state.persona);
+  const liveName = liveOption?.name ?? state.persona ?? activeTutor.name;
 
-  // ---------------------------------------------------------------- live
-  if (state.status === "live") {
+  const pickPersona = (id: string) => {
+    const tutor = tutors.find((t) => t.personaId === id);
+    if (tutor) setActiveTutor(tutor.id);
+  };
+
+  // ------------------------------------------------------ connecting / live
+  if (state.status !== "idle") {
+    const connecting = state.status === "connecting";
     return (
       <div className="live-stage" data-speaking={state.tutorSpeaking || undefined}>
         <div className="live-face">
           {/* The video element stays mounted so attach() has a target the
-              instant the avatar publishes; the orb covers it until then. */}
+              instant the avatar publishes; until then the tutor's photo (or
+              the orb) holds the spot. */}
           <video
             ref={videoRef}
             className="live-video"
@@ -99,50 +69,52 @@ export function LiveTutorStage({ refresh = 0, onManage }: Props) {
             muted /* voice arrives on its own audio track */
             style={{ display: state.videoTrack ? "block" : "none" }}
           />
-          {!state.videoTrack && (
-            <div className="tutor-orb live-orb">
-              <SoundWaveIcon />
-            </div>
-          )}
+          {!state.videoTrack &&
+            (liveOption?.photoUrl ? (
+              <img
+                className={`avatar-photo live-photo${connecting ? " live-connecting" : ""}`}
+                src={liveOption.photoUrl}
+                alt={`${liveName} (tutor)`}
+              />
+            ) : (
+              <div className={`tutor-orb live-orb${connecting ? " live-connecting" : ""}`}>
+                <SoundWaveIcon />
+              </div>
+            ))}
         </div>
 
-        <div className="live-name">{name}</div>
+        <div className="tutor-id">
+          <div className="tutor-name">{liveName}</div>
+          <div className="tutor-role">Live session</div>
+        </div>
         <div className="live-status">
-          {state.tutorPresent
-            ? state.tutorSpeaking
-              ? "Speaking…"
-              : "Listening — just talk"
-            : "Waiting for the tutor agent to join…"}
+          {connecting
+            ? "Ringing your tutor…"
+            : state.tutorPresent
+              ? state.tutorSpeaking
+                ? "Speaking…"
+                : "Listening — just talk"
+              : "Waiting for the tutor agent to join…"}
         </div>
         {state.micError && <div className="live-warn">⚠ {state.micError}</div>}
 
         <div className="live-controls">
-          <button type="button" className="icon-btn" onClick={() => void toggleMic()}>
-            {state.micEnabled ? <MicOnIcon /> : <MicOffIcon />}
-            {state.micEnabled ? "Mute" : "Unmute"}
-          </button>
-          <button type="button" className="icon-btn live-end" onClick={end}>
-            <EndIcon />
-            End
-          </button>
-        </div>
-      </div>
-    );
-  }
-
-  // ---------------------------------------------------------- connecting
-  if (state.status === "connecting") {
-    return (
-      <div className="live-stage">
-        <div className="tutor-orb live-orb live-connecting">
-          <SoundWaveIcon />
-        </div>
-        <div className="live-name">{name}</div>
-        <div className="live-status">Ringing your tutor…</div>
-        <div className="live-controls">
-          <button type="button" className="icon-btn live-end" onClick={end}>
-            Cancel
-          </button>
+          {connecting ? (
+            <button type="button" className="icon-btn live-end" onClick={end}>
+              Cancel
+            </button>
+          ) : (
+            <>
+              <button type="button" className="icon-btn" onClick={() => void toggleMic()}>
+                {state.micEnabled ? <MicOnIcon /> : <MicOffIcon />}
+                {state.micEnabled ? "Mute" : "Unmute"}
+              </button>
+              <button type="button" className="icon-btn live-end" onClick={end}>
+                <EndIcon />
+                End
+              </button>
+            </>
+          )}
         </div>
       </div>
     );
@@ -150,23 +122,40 @@ export function LiveTutorStage({ refresh = 0, onManage }: Props) {
 
   // ---------------------------------------------------------------- idle
   return (
-    <div className="live-stage">
-      <div className="tutor-orb live-orb">
-        <SoundWaveIcon />
+    <>
+      <div className="tutor-avatar">
+        <Avatar tutor={activeTutor} size={168} pose="idle" expression="happy" />
       </div>
-      <div className="live-name">Talk to your tutor</div>
-      <p className="tutor-sub">
-        A live voice session — your tutor listens, answers, and can appear
-        face-to-face when they have an avatar.
-      </p>
+      <div className="tutor-id">
+        <div className="tutor-name">{activeTutor.name}</div>
+        <div className="tutor-role">Your tutor</div>
+      </div>
+      <span className="voice-status">
+        <span className="waveform" aria-hidden>
+          <span /><span /><span /><span /><span />
+        </span>
+        {idleVoiceLabel}
+      </span>
+
+      <div className="speech">
+        <div className="speech-label">
+          <span className="dot" aria-hidden /> Now saying
+        </div>
+        <p className="speech-text">
+          <span className="q">“</span>
+          {idleSpeech}
+          <span className="q">”</span>
+        </p>
+      </div>
 
       <div className="live-picker">
         <select
           className="live-select"
-          value={selected}
-          onChange={(e) => setSelected(e.target.value)}
+          value={personaId}
+          onChange={(e) => pickPersona(e.target.value)}
           aria-label="Choose a tutor"
         >
+          {!personaId && <option value="">Choose a voice tutor…</option>}
           {options.map((t) => (
             <option key={t.id} value={t.id}>
               {t.name}
@@ -178,13 +167,19 @@ export function LiveTutorStage({ refresh = 0, onManage }: Props) {
         <button
           type="button"
           className="ask-btn live-start"
-          disabled={configured === false}
-          onClick={() => void start(selected)}
+          disabled={configured === false || !personaId || selectedOption?.hasVoice === false}
+          onClick={() => void start(personaId)}
         >
           Start session
         </button>
       </div>
 
+      {selectedOption?.hasVoice === false && (
+        <div className="live-warn">
+          {selectedOption.name} has no voice yet — assign one in the Tutors panel
+          before starting a session.
+        </div>
+      )}
       {configured === false && (
         <div className="live-warn">
           LiveKit isn't configured — add LIVEKIT_URL / _API_KEY / _API_SECRET to
@@ -193,12 +188,10 @@ export function LiveTutorStage({ refresh = 0, onManage }: Props) {
       )}
       {state.error && <div className="live-warn">⚠ {state.error}</div>}
 
-      {onManage && (
-        <button type="button" className="live-manage" onClick={onManage}>
-          Create &amp; manage voice tutors
-        </button>
-      )}
-    </div>
+      <button type="button" className="live-manage" onClick={openManage}>
+        Create &amp; manage voice tutors
+      </button>
+    </>
   );
 }
 

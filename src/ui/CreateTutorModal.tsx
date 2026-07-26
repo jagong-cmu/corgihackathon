@@ -1,6 +1,10 @@
 /**
  * CreateTutorModal — create a tutor on-site by recording a voice sample and
- * taking a webcam photo (with upload fallbacks), then saving it to the roster.
+ * taking a webcam photo (with upload fallbacks). The capture becomes a real
+ * person: a persona in the API, the voice cloned on ElevenLabs, the photo
+ * attached as the LemonSlice avatar — so the new tutor can hold a live voice
+ * session with their own face and voice. When the API isn't running the tutor
+ * still lands in the local roster (whiteboard-only) with a note saying so.
  *
  * Renders nothing unless the shared TutorContext has `createOpen` set. Closes on
  * the X button, a backdrop click, or Escape; always tears down live media and
@@ -9,6 +13,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTutors } from "../tutors/TutorContext";
 import { useCamera, useMicRecorder } from "../tutors/useMediaCapture";
+import { createTutorFromCapture } from "../tutorApi";
 import "./createTutor.css";
 
 function formatTime(total: number): string {
@@ -18,13 +23,18 @@ function formatTime(total: number): string {
 }
 
 export function CreateTutorModal() {
-  const { createOpen, closeCreate, addTutor } = useTutors();
+  const { createOpen, closeCreate, addTutor, personasChanged } = useTutors();
   const camera = useCamera();
   const mic = useMicRecorder();
 
   const [name, setName] = useState("");
   const [photo, setPhoto] = useState<string | null>(null);
   const [uploadedVoice, setUploadedVoice] = useState<string | null>(null);
+
+  // Creation pipeline (persona + ElevenLabs clone + LemonSlice photo).
+  const [busy, setBusy] = useState(false);
+  const [progress, setProgress] = useState<string | null>(null);
+  const [warnings, setWarnings] = useState<string[] | null>(null);
 
   const photoInputRef = useRef<HTMLInputElement>(null);
   const audioInputRef = useRef<HTMLInputElement>(null);
@@ -35,17 +45,21 @@ export function CreateTutorModal() {
     setName("");
     setPhoto(null);
     setUploadedVoice(null);
+    setBusy(false);
+    setProgress(null);
+    setWarnings(null);
     if (photoInputRef.current) photoInputRef.current.value = "";
     if (audioInputRef.current) audioInputRef.current.value = "";
     mic.reset();
   }, [mic]);
 
   const handleClose = useCallback(() => {
+    if (busy) return; // mid-create: the pipeline is talking to vendors
     camera.stop();
     mic.stop();
     resetLocal();
     closeCreate();
-  }, [camera, mic, resetLocal, closeCreate]);
+  }, [busy, camera, mic, resetLocal, closeCreate]);
 
   // Escape closes while open.
   useEffect(() => {
@@ -88,19 +102,40 @@ export function CreateTutorModal() {
     setUploadedVoice(URL.createObjectURL(file));
   };
 
-  const canCreate = Boolean(name.trim()) && Boolean(photo);
+  const canCreate = Boolean(name.trim()) && Boolean(photo) && !busy;
 
-  const handleCreate = () => {
+  const handleCreate = async () => {
     if (!canCreate) return;
+    setBusy(true);
+    setWarnings(null);
+    camera.stop();
+    mic.stop();
+
+    // The real pipeline: persona in the API, voice cloned on ElevenLabs,
+    // photo attached for the LemonSlice avatar. Falls back to a local-only
+    // tutor (with a visible note) when the API isn't running.
+    const { spec, warnings: notes } = await createTutorFromCapture(
+      { name, photoDataUrl: photo, voiceUrl },
+      setProgress
+    );
+
     addTutor({
       name,
       photo: photo ?? undefined,
       voiceUrl: voiceUrl ?? undefined,
+      personaId: spec?.id,
+      hasVoice: Boolean(spec?.voice?.voice_id),
     });
-    camera.stop();
-    mic.stop();
-    resetLocal();
-    closeCreate();
+    if (spec) personasChanged();
+
+    setBusy(false);
+    setProgress(null);
+    if (notes.length === 0) {
+      resetLocal();
+      closeCreate();
+    } else {
+      setWarnings(notes); // keep the modal up so the user sees what to finish
+    }
   };
 
   return (
@@ -271,19 +306,56 @@ export function CreateTutorModal() {
           {mic.error && <p className="ct-warn">{mic.error}</p>}
         </div>
 
+        {/* Status ------------------------------------------------------ */}
+        {busy && progress && (
+          <p className="ct-progress" role="status">
+            <span className="ct-spinner" aria-hidden /> {progress}
+          </p>
+        )}
+        {warnings && (
+          <div className="ct-notes" role="status">
+            <p className="ct-notes-title">Your tutor was created — a couple of notes:</p>
+            <ul>
+              {warnings.map((w) => (
+                <li key={w}>{w}</li>
+              ))}
+            </ul>
+          </div>
+        )}
+
         {/* Footer ------------------------------------------------------ */}
         <div className="ct-footer">
-          <button type="button" className="ct-btn ct-btn-ghost" onClick={handleClose}>
-            Cancel
-          </button>
-          <button
-            type="button"
-            className="ct-btn ct-btn-primary"
-            disabled={!canCreate}
-            onClick={handleCreate}
-          >
-            Create tutor
-          </button>
+          {warnings ? (
+            <button
+              type="button"
+              className="ct-btn ct-btn-primary"
+              onClick={() => {
+                setWarnings(null);
+                handleClose();
+              }}
+            >
+              Done
+            </button>
+          ) : (
+            <>
+              <button
+                type="button"
+                className="ct-btn ct-btn-ghost"
+                disabled={busy}
+                onClick={handleClose}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="ct-btn ct-btn-primary"
+                disabled={!canCreate}
+                onClick={() => void handleCreate()}
+              >
+                {busy ? "Creating…" : "Create tutor"}
+              </button>
+            </>
+          )}
         </div>
       </div>
     </div>

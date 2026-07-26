@@ -66,6 +66,8 @@ export interface TutorOption {
   name: string;
   hasVoice: boolean;
   avatarProvider: string;
+  /** Displayable photo for this tutor, when the avatar_ref resolves to one. */
+  photoUrl: string | null;
 }
 
 /**
@@ -73,8 +75,8 @@ export interface TutorOption {
  * database. Shown when the persona API is unreachable.
  */
 export const BUILTIN_TUTORS: TutorOption[] = [
-  { id: "ada", name: "Ada", hasVoice: true, avatarProvider: "lemonslice" },
-  { id: "coach-rios", name: "Coach Rios", hasVoice: true, avatarProvider: "simli" },
+  { id: "ada", name: "Ada", hasVoice: true, avatarProvider: "lemonslice", photoUrl: null },
+  { id: "coach-rios", name: "Coach Rios", hasVoice: true, avatarProvider: "simli", photoUrl: null },
 ];
 
 const BASE = "/tutor-api";
@@ -112,12 +114,27 @@ export async function listTutors(): Promise<TutorSpec[]> {
   return body.personas;
 }
 
+/**
+ * A displayable URL for a persona's avatar_ref, when it points at a photo:
+ * `blob:<id>` refs are served by the API (through the dev proxy), http(s)
+ * refs are used as-is, and provider-side ids (LemonSlice agent / Simli face)
+ * have no photo we can show.
+ */
+export function avatarPhotoUrl(ref: string | null | undefined): string | null {
+  if (!ref) return null;
+  if (ref.startsWith("blob:")) return `${BASE}/blobs/${ref.slice("blob:".length)}`;
+  if (ref.startsWith("http://") || ref.startsWith("https://")) return ref;
+  return null;
+}
+
 export function toOption(spec: TutorSpec): TutorOption {
   return {
     id: spec.id,
     name: spec.identity.name,
     hasVoice: Boolean(spec.voice?.voice_id),
     avatarProvider: spec.avatar?.provider ?? "none",
+    photoUrl:
+      (spec.avatar?.provider ?? "none") === "none" ? null : avatarPhotoUrl(spec.avatar?.avatar_ref),
   };
 }
 
@@ -226,4 +243,159 @@ export async function cloneVoice(slug: string, file: File): Promise<{ voice_id: 
     method: "POST",
     body: form,
   });
+}
+
+// ------------------------------------------------- create from a capture
+
+/** Attach a photo to a tutor. Stored in the API's blob store; the agent worker
+ * hands the bytes to LemonSlice at session start, so no public URL is needed. */
+export async function uploadAvatarPhoto(
+  slug: string,
+  file: File
+): Promise<{ blob_id: string; avatar_ref: string }> {
+  const form = new FormData();
+  form.append("file", file);
+  return request(`/personas/${slug}/avatar`, { method: "POST", body: form });
+}
+
+/** What the create-tutor modal captures. */
+export interface CapturedTutor {
+  name: string;
+  /** Webcam snapshot or uploaded picture, as a data URL. */
+  photoDataUrl?: string | null;
+  /** Recorded/uploaded voice sample, as an object URL. */
+  voiceUrl?: string | null;
+}
+
+export interface CreatedFromCapture {
+  /** The persona as the API now serves it — null when the API isn't running. */
+  spec: TutorSpec | null;
+  /** Anything that didn't work end-to-end, in words the user can act on. */
+  warnings: string[];
+}
+
+function dataUrlToFile(dataUrl: string, baseName: string): File {
+  const [head, body] = dataUrl.split(",", 2);
+  const mime = head.match(/^data:([^;]+)/)?.[1] ?? "image/jpeg";
+  const bin = atob(body);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  const ext = mime.split("/")[1]?.replace("jpeg", "jpg") ?? "jpg";
+  return new File([bytes], `${baseName}.${ext}`, { type: mime });
+}
+
+const AUDIO_EXT: Record<string, string> = {
+  "audio/webm": "webm",
+  "audio/mp4": "m4a",
+  "audio/mpeg": "mp3",
+  "audio/wav": "wav",
+  "audio/x-wav": "wav",
+};
+
+async function objectUrlToAudioFile(url: string, baseName: string): Promise<File> {
+  const blob = await (await fetch(url)).blob();
+  // MediaRecorder reports e.g. "audio/webm;codecs=opus"; the API matches on
+  // the bare mime type.
+  const mime = (blob.type || "audio/webm").split(";")[0];
+  return new File([blob], `${baseName}.${AUDIO_EXT[mime] ?? "webm"}`, { type: mime });
+}
+
+/** A slug for the new tutor that doesn't silently replace an existing one. */
+async function freeSlug(name: string): Promise<string | null> {
+  const base = slugify(name);
+  if (!base) return null;
+  const taken = new Set((await listTutors()).map((t) => t.id));
+  if (!taken.has(base)) return base;
+  for (let n = 2; n < 100; n++) {
+    const candidate = `${base.slice(0, 45)}-${n}`;
+    if (!taken.has(candidate)) return candidate;
+  }
+  return null;
+}
+
+/**
+ * The whole modal flow in one call: create a synthetic persona, clone the
+ * captured voice on ElevenLabs, attach the photo for the LemonSlice avatar.
+ *
+ * Best-effort by design — a failed clone (no key, plan-gated) or a rejected
+ * photo leaves a usable persona plus a warning saying what to finish in the
+ * Tutors panel, and an unreachable API returns spec:null so the caller can
+ * keep the tutor local to this session.
+ */
+export async function createTutorFromCapture(
+  input: CapturedTutor,
+  onProgress?: (message: string) => void
+): Promise<CreatedFromCapture> {
+  const warnings: string[] = [];
+  onProgress?.("Reaching the tutor API…");
+  if (!(await tutorApiAvailable())) {
+    return {
+      spec: null,
+      warnings: [
+        "The persona API isn't running (see LIVE_TUTOR.md), so this tutor lives only in this browser session — it can't speak in live sessions.",
+      ],
+    };
+  }
+
+  const slug = await freeSlug(input.name);
+  if (!slug) {
+    return {
+      spec: null,
+      warnings: ["Couldn't derive a tutor id from that name — start it with a letter."],
+    };
+  }
+
+  onProgress?.("Creating the tutor…");
+  await createTutor({
+    id: slug,
+    kind: "synthetic",
+    identity: { name: input.name.trim(), relationship: "the learner's tutor" },
+    speech: {
+      catchphrases: [],
+      fillers: [],
+      verbosity: "medium",
+      warmth: "high",
+      formality: "low",
+    },
+    pedagogy: {
+      style: "socratic",
+      patience: "high",
+      on_wrong_answer: "asks what led the learner there before correcting",
+      analogy_sources: [],
+    },
+    few_shot: [],
+    never_does: ["says “Great question!”"],
+    voice: null, // cloned below when a sample was captured
+    // Provider first, photo second: the upload endpoint fills avatar_ref.
+    avatar: { provider: input.photoDataUrl ? "lemonslice" : "none", avatar_ref: null },
+  });
+
+  if (input.photoDataUrl) {
+    onProgress?.("Attaching the photo (their face for LemonSlice)…");
+    try {
+      await uploadAvatarPhoto(slug, dataUrlToFile(input.photoDataUrl, slug));
+    } catch (err) {
+      warnings.push(`The photo didn't take (${(err as Error).message}) — sessions run voice-only.`);
+    }
+  }
+
+  if (input.voiceUrl) {
+    onProgress?.("Cloning the voice on ElevenLabs…");
+    try {
+      await cloneVoice(slug, await objectUrlToAudioFile(input.voiceUrl, `${slug}-voice`));
+    } catch (err) {
+      warnings.push(
+        `Voice cloning failed (${(err as Error).message}) — assign a voice in the Tutors panel; sessions need one.`
+      );
+    }
+  } else {
+    warnings.push("No voice sample — assign a voice in the Tutors panel before starting a session.");
+  }
+
+  try {
+    const spec = await request<TutorSpec>(`/personas/${slug}`);
+    return { spec, warnings };
+  } catch {
+    return { spec: null, warnings: [...warnings, "Created, but reading the tutor back failed."] };
+  }
 }

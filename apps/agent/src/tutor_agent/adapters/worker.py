@@ -25,6 +25,7 @@ from ..providers.anthropic_llm import AnthropicLLM
 from ..providers.factory import make_tts
 from ..providers.livekit_avatar import (
     AVATAR_SAMPLE_RATE,
+    BLOB_REF_PREFIX,
     AvatarCredentials,
     LemonSliceAvatar,
     LemonSliceConfig,
@@ -32,6 +33,7 @@ from ..providers.livekit_avatar import (
     SimliAvatar,
     SimliConfig,
     known_avatar_identities,
+    load_blob_image,
 )
 from .realtime import CANVAS_TOPIC, NUM_CHANNELS, SAMPLE_RATE, LiveKitAdapter
 
@@ -412,7 +414,20 @@ async def _maybe_start_avatar(ctx: agents.JobContext, persona) -> LiveKitAvatar 
             log.info("avatar disabled — set LEMONSLICE_API_KEY to enable")
             return None
         ref = persona.avatar.avatar_ref or os.environ.get("LEMONSLICE_AVATAR_REF", "")
-        avatar = LemonSliceAvatar(config=LemonSliceConfig(api_key=api_key), credentials=credentials)
+        image = None
+        if ref.startswith(BLOB_REF_PREFIX):
+            # A photo uploaded through apps/api. LemonSlice takes the bytes as
+            # a multipart upload, so the blob never needs a public URL.
+            image = await asyncio.to_thread(
+                load_blob_image, ref, dsn=os.environ.get("DATABASE_URL")
+            )
+            if image is None:
+                log.warning("avatar photo %s could not be loaded — voice-only session", ref)
+                return None
+            ref = ""
+        avatar = LemonSliceAvatar(
+            config=LemonSliceConfig(api_key=api_key, agent_image=image), credentials=credentials
+        )
     elif provider == "simli":
         api_key = os.environ.get("SIMLI_API_KEY")
         ref = persona.avatar.avatar_ref or os.environ.get("SIMLI_FACE_ID", "")

@@ -250,6 +250,39 @@ class TestAvatarUpload:
         )
         assert r.status_code == 404
 
+    def test_upload_flips_a_voice_only_persona_to_lemonslice(self, client, owner):
+        """Uploading a photo is asking for a face; the worker only starts an
+        avatar when provider != none, so 'none' must not survive the upload."""
+        slug = f"t{uuid.uuid4().hex[:8]}"
+        client.post(
+            "/personas",
+            json=_spec(slug, avatar={"provider": "none", "avatar_ref": None}),
+            headers={"X-User-Id": owner},
+        )
+        client.post(
+            f"/personas/{slug}/avatar",
+            files={"file": ("face.png", self.PNG, "image/png")},
+            headers={"X-User-Id": owner},
+        )
+        persona = client.get(f"/personas/{slug}", headers={"X-User-Id": owner}).json()
+        assert persona["avatar"]["provider"] == "lemonslice"
+
+    def test_upload_keeps_an_explicit_simli_choice(self, client, owner):
+        slug = f"t{uuid.uuid4().hex[:8]}"
+        client.post(
+            "/personas",
+            json=_spec(slug, avatar={"provider": "simli", "avatar_ref": "face-1"}),
+            headers={"X-User-Id": owner},
+        )
+        client.post(
+            f"/personas/{slug}/avatar",
+            files={"file": ("face.png", self.PNG, "image/png")},
+            headers={"X-User-Id": owner},
+        )
+        persona = client.get(f"/personas/{slug}", headers={"X-User-Id": owner}).json()
+        assert persona["avatar"]["provider"] == "simli"
+        assert persona["avatar"]["avatar_ref"].startswith("blob:")
+
 
 class TestVoiceAssignment:
     def test_library_voice_can_be_assigned_without_cloning(self, client, owner):
@@ -269,6 +302,119 @@ class TestVoiceAssignment:
         assert (
             client.post(f"/personas/{slug}/voice", headers={"X-User-Id": owner}).status_code == 400
         )
+
+
+class FakeVoices:
+    """Stands in for ElevenLabsVoices at the app seam (_voices).
+
+    The vendor call is the one thing these tests must not make; everything
+    around it — persona lookup, blob custody, the §10 purge — is real.
+    """
+
+    def __init__(self, *, error: Exception | None = None) -> None:
+        self.error = error
+        self.cloned_names: list[str] = []
+
+    async def clone_instant(self, *, name: str, samples) -> str:
+        if self.error:
+            raise self.error
+        self.cloned_names.append(name)
+        return "fake-cloned-voice"
+
+    async def aclose(self) -> None:
+        pass
+
+
+class TestVoiceCloning:
+    WEBM = b"\x1a\x45\xdf\xa3" + b"\x00" * 64  # shape of a MediaRecorder capture
+
+    def _clone(self, client, owner, slug):
+        return client.post(
+            f"/personas/{slug}/voice",
+            files={"file": ("sample.webm", self.WEBM, "audio/webm")},
+            headers={"X-User-Id": owner},
+        )
+
+    def test_clone_sets_the_voice_and_purges_the_sample(self, client, conn, owner, monkeypatch):
+        monkeypatch.setattr("tutor_api.app._voices", lambda: FakeVoices())
+        slug = f"t{uuid.uuid4().hex[:8]}"
+        client.post("/personas", json=_spec(slug), headers={"X-User-Id": owner})
+
+        r = self._clone(client, owner, slug)
+        assert r.status_code == 200, r.text
+        assert r.json() == {"voice_id": "fake-cloned-voice", "cloned": True}
+
+        persona = client.get(f"/personas/{slug}", headers={"X-User-Id": owner}).json()
+        assert persona["voice"]["voice_id"] == "fake-cloned-voice"
+        assert persona["voice"]["provider"] == "elevenlabs"
+
+        # §10: the sample is biometric data; once the voice lives vendor-side
+        # the blob must be purged, not retained.
+        purged = conn.execute(
+            "SELECT deleted_at FROM blobs WHERE owner_user_id = %s AND kind = 'voice_sample'",
+            (owner,),
+        ).fetchall()
+        assert purged and all(row[0] is not None for row in purged)
+
+    def test_plan_gated_cloning_is_402(self, client, owner, monkeypatch):
+        from tutor_agent.providers.elevenlabs_voices import VoiceCloningUnavailableError
+
+        monkeypatch.setattr(
+            "tutor_api.app._voices",
+            lambda: FakeVoices(
+                error=VoiceCloningUnavailableError("can_not_use_instant_voice_cloning", "upgrade")
+            ),
+        )
+        slug = f"t{uuid.uuid4().hex[:8]}"
+        client.post("/personas", json=_spec(slug), headers={"X-User-Id": owner})
+
+        r = self._clone(client, owner, slug)
+        assert r.status_code == 402
+        assert "upgrade" in r.text
+
+
+class TestCaptureFlow:
+    """The create-tutor modal's exact sequence, ownerless like the modal:
+    synthetic persona -> photo upload -> voice clone -> a complete person."""
+
+    def test_capture_becomes_a_complete_person(self, client, conn, monkeypatch):
+        monkeypatch.setattr("tutor_api.app._voices", lambda: FakeVoices())
+        slug = f"capture-{uuid.uuid4().hex[:8]}"
+
+        created = client.post(
+            "/personas",
+            json=_spec(
+                slug,
+                kind="synthetic",
+                avatar={"provider": "lemonslice", "avatar_ref": None},
+            ),
+        )
+        assert created.status_code == 201, created.text
+
+        photo = client.post(
+            f"/personas/{slug}/avatar",
+            files={"file": ("face.png", TestAvatarUpload.PNG, "image/png")},
+        )
+        assert photo.status_code == 200, photo.text
+
+        voice = client.post(
+            f"/personas/{slug}/voice",
+            files={"file": ("voice.webm", TestVoiceCloning.WEBM, "audio/webm")},
+        )
+        assert voice.status_code == 200, voice.text
+
+        persona = client.get(f"/personas/{slug}").json()
+        assert persona["avatar"]["provider"] == "lemonslice"
+        assert persona["avatar"]["avatar_ref"].startswith("blob:")
+        assert persona["voice"]["voice_id"] == "fake-cloned-voice"
+
+        # The worker's session-start path can really load that photo.
+        blob_id = persona["avatar"]["avatar_ref"].removeprefix("blob:")
+        assert client.get(f"/blobs/{blob_id}").status_code == 200
+
+        # Ownerless library rows aren't cascade-deleted with a test user.
+        conn.execute("DELETE FROM personas WHERE slug = %s", (slug,))
+        conn.execute("DELETE FROM blobs WHERE id = %s", (blob_id,))
 
 
 def test_health(client):

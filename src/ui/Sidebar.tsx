@@ -154,7 +154,11 @@ export function Sidebar() {
                     <span className="sb-tutor-meta">
                       <span className="sb-tutor-name">{t.name}</span>
                       <span className="sb-tag">
-                        {t.id === "trudy" ? "Corgi" : "Custom"}
+                        {t.id === "trudy"
+                          ? "Corgi"
+                          : t.personaId
+                            ? "Voice tutor"
+                            : "Custom"}
                       </span>
                     </span>
                     {active && (

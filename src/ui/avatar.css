@@ -7,3 +7,16 @@
   background: #f6efe1;
   display: block;
 }
+
+/* Photo-less tutor — a monogram disc in the tutor's accent color. */
+.avatar-monogram {
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  font-family: var(--serif, Georgia, serif);
+  font-weight: 600;
+  background: radial-gradient(circle at 34% 28%, #fffdf8, #f3e8d2);
+  border: 3px solid #fefdfa;
+  box-shadow: 0 6px 18px rgba(60, 40, 15, .22), inset 0 2px 6px rgba(255, 255, 255, .5);
+  user-select: none;
+}

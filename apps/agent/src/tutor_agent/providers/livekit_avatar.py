@@ -41,6 +41,7 @@ import json
 import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any
 
 from livekit import api, rtc
 from livekit.agents.voice.avatar import DataStreamAudioOutput
@@ -48,12 +49,52 @@ from livekit.agents.voice.room_io import ATTRIBUTE_PUBLISH_ON_BEHALF
 
 from ..core.audio import PcmStreamSplitter
 
+if TYPE_CHECKING:
+    from PIL import Image
+
 log = logging.getLogger(__name__)
 
 # Every avatar vendor we've looked at ingests 16kHz mono. Our TTS must be asked
 # for pcm_16000 when an avatar is active or the speech arrives at the wrong
 # speed — a bug that sounds like the tutor is on helium.
 AVATAR_SAMPLE_RATE = 16_000
+
+# avatar_ref values of this shape point at a photo in the API's blob store
+# (apps/api .../blobs.py writes them). Kept in sync by test_realtime_adapter.
+BLOB_REF_PREFIX = "blob:"
+
+
+def load_blob_image(ref: str, *, dsn: str | None) -> Image.Image | None:
+    """The photo behind a `blob:<id>` avatar_ref, as a PIL image, or None.
+
+    Photo uploads live in Postgres (the API's blob store); LemonSlice takes the
+    bytes as a multipart upload, so nothing here needs a public URL. Returns
+    None on any failure — a missing photo degrades the session to voice-only,
+    it must never end it.
+    """
+    blob_id = ref[len(BLOB_REF_PREFIX) :]
+    if not dsn:
+        log.warning("avatar_ref %r needs DATABASE_URL to load the photo", ref)
+        return None
+    try:
+        import io
+
+        import psycopg
+        from PIL import Image as PILImage
+
+        with psycopg.connect(dsn, autocommit=True) as conn:
+            row = conn.execute(
+                "SELECT bytes FROM blobs WHERE id = %s AND deleted_at IS NULL", (blob_id,)
+            ).fetchone()
+        if row is None:
+            log.warning("avatar photo blob %s is missing or was purged", blob_id)
+            return None
+        image = PILImage.open(io.BytesIO(bytes(row[0])))
+        image.load()  # decode now, inside the thread that owns the bytes
+        return image
+    except Exception:
+        log.exception("failed to load avatar photo blob %s", blob_id)
+        return None
 
 
 @dataclass
@@ -187,8 +228,41 @@ class LemonSliceConfig:
     """A photo URL — LemonSlice builds the avatar from a single image, no
     training, which is what makes persona onboarding a 30-second step (§3)."""
 
+    agent_image: Image.Image | None = None
+    """A photo as a PIL image, sent to LemonSlice as a multipart upload. This is
+    how `blob:` avatar_refs (photos in the API's blob store) reach the vendor
+    without needing a publicly fetchable URL — the worker resolves the blob to
+    bytes before start()."""
+
     idle_timeout: int = 30
     api_url: str | None = None
+
+
+def select_lemonslice_source(config: LemonSliceConfig, avatar_ref: str) -> dict[str, Any] | None:
+    """The avatar-source kwargs for LemonSliceAPI.start_agent_session, or None.
+
+    The persona's avatar_ref overrides the config: an `http(s)://` ref is a
+    photo URL, a `blob:` ref must have been resolved to config.agent_image by
+    the caller (returning None here rather than sending the raw ref, which
+    LemonSlice would reject as an unknown agent id), and anything else is an
+    agent id. Exactly one source is ever returned — the plugin requires it.
+    """
+    if avatar_ref.startswith(BLOB_REF_PREFIX):
+        if config.agent_image is None:
+            log.error("unresolved blob avatar_ref %r — the caller must load it", avatar_ref)
+            return None
+        return {"agent_image": config.agent_image}
+    if avatar_ref.startswith(("http://", "https://")):
+        return {"agent_image_url": avatar_ref}
+    if avatar_ref:
+        return {"agent_id": avatar_ref}
+    if config.agent_id:
+        return {"agent_id": config.agent_id}
+    if config.agent_image_url:
+        return {"agent_image_url": config.agent_image_url}
+    if config.agent_image is not None:
+        return {"agent_image": config.agent_image}
+    return None
 
 
 class LemonSliceAvatar(LiveKitAvatar):
@@ -203,27 +277,17 @@ class LemonSliceAvatar(LiveKitAvatar):
         from livekit.agents import get_job_context
         from livekit.plugins.lemonslice.api import LemonSliceAPI
 
-        # avatar_ref from the persona overrides the env default. It is an
-        # agent_id if it looks like one, otherwise a photo URL.
-        agent_id = self.config.agent_id
-        image_url = self.config.agent_image_url
-        if avatar_ref:
-            if avatar_ref.startswith(("http://", "https://")):
-                image_url = avatar_ref
-            else:
-                agent_id = avatar_ref
-        if not agent_id and not image_url:
-            log.error("lemonslice needs an agent_id or an image URL — set LEMONSLICE_AVATAR_REF")
+        # avatar_ref from the persona overrides the config/env default: an
+        # http(s) URL, a resolved blob photo, or an agent id.
+        kwargs = select_lemonslice_source(self.config, avatar_ref)
+        if kwargs is None:
+            log.error(
+                "lemonslice needs an agent_id, an image URL, or a photo — set LEMONSLICE_AVATAR_REF"
+            )
             return False
 
         job_ctx = get_job_context()
         session_id = job_ctx.job.room.sid or await self.credentials.room.sid
-
-        kwargs = {}
-        if agent_id:
-            kwargs["agent_id"] = agent_id
-        if image_url:
-            kwargs["agent_image_url"] = image_url
 
         async with LemonSliceAPI(
             api_key=self.config.api_key, api_url=self.config.api_url

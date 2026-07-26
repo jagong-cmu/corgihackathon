@@ -25,6 +25,7 @@ import type { RevealApi } from "../voice/voiceInterface";
 import type { VisualSpec } from "../spec/visualSpec";
 import { subscribeBoardCues } from "../live/boardCueBus";
 import { askTutor, type TurnResponse } from "../api";
+import { LiveTutorStage } from "../live/LiveTutorStage";
 import "./shell.css";
 
 export function TutorShell() {
@@ -240,33 +241,13 @@ export function TutorShell() {
       </form>
 
       <main className="tutor-body">
-        {/* LEFT: the active tutor — present, speaking the current line aloud. */}
+        {/* LEFT: the tutor — one presence. Idle it's the active tutor speaking
+            the current line; in a live session the same card becomes the
+            session (avatar face, status, mic controls) instead of a second
+            box squeezing in underneath. */}
         <section className="tutor-col" aria-label="Tutor">
           <div className="tutor-card">
-            <div className="tutor-avatar">
-              <Avatar tutor={activeTutor} size={168} pose="idle" expression="happy" />
-            </div>
-            <div className="tutor-id">
-              <div className="tutor-name">{activeTutor.name}</div>
-              <div className="tutor-role">Your tutor</div>
-            </div>
-            <span className="voice-status">
-              <span className="waveform" aria-hidden>
-                <span /><span /><span /><span /><span />
-              </span>
-              {voiceLabel}
-            </span>
-
-            <div className="speech">
-              <div className="speech-label">
-                <span className="dot" aria-hidden /> Now saying
-              </div>
-              <p className="speech-text">
-                <span className="q">“</span>
-                {activeSpokenText}
-                <span className="q">”</span>
-              </p>
-            </div>
+            <LiveTutorStage idleSpeech={activeSpokenText} idleVoiceLabel={voiceLabel} />
           </div>
           <div className="flex-spacer" aria-hidden />
         </section>

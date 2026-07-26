@@ -22,6 +22,7 @@ import {
   patchTutor,
   slugify,
   tutorApiAvailable,
+  uploadAvatarPhoto,
   voiceCapabilities,
   type TutorExchange,
   type TutorSpec,
@@ -355,6 +356,7 @@ function AvatarEditor({
   const [provider, setProvider] = useState(tutor.avatar.provider ?? "none");
   const [ref, setRef] = useState(tutor.avatar.avatar_ref ?? "");
   const [busy, setBusy] = useState(false);
+  const photoRef = useRef<HTMLInputElement>(null);
 
   const save = async () => {
     setBusy(true);
@@ -370,10 +372,41 @@ function AvatarEditor({
     }
   };
 
+  const uploadPhoto = async () => {
+    const file = photoRef.current?.files?.[0];
+    if (!file) return;
+    setBusy(true);
+    try {
+      // Stores the photo in the API's blob store; the agent worker hands the
+      // bytes to LemonSlice at session start (and a voice-only persona flips
+      // to the lemonslice provider server-side).
+      await uploadAvatarPhoto(tutor.id, file);
+      onChanged();
+    } catch (err) {
+      onError(`photo upload failed: ${(err as Error).message}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <div className="tutor-editor">
       <label className="tutors-label">
-        Provider
+        Give them a face from a photo
+        <div className="tutor-editor-row">
+          <input ref={photoRef} type="file" accept="image/jpeg,image/png,image/webp" />
+          <button type="button" className="ask-btn" disabled={busy} onClick={() => void uploadPhoto()}>
+            Upload photo
+          </button>
+        </div>
+        <span className="tutors-hint">
+          LemonSlice builds the talking avatar from a single photo — no training,
+          no public URL needed.
+        </span>
+      </label>
+
+      <label className="tutors-label">
+        …or point at a provider
         <select
           className="live-select"
           value={provider}
@@ -399,8 +432,8 @@ function AvatarEditor({
             onChange={(e) => setRef(e.target.value)}
           />
           <span className="tutors-hint">
-            The avatar vendor fetches this itself, so a photo URL must be
-            publicly reachable — uploaded blobs aren't, yet.
+            An https:// photo URL must be publicly reachable — the vendor
+            fetches it. (Uploaded photos above don't need that.)
           </span>
         </label>
       )}

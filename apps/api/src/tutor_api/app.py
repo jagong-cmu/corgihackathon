@@ -255,8 +255,14 @@ async def upload_avatar(
         owner_user_id=owner,
     )
     ref = blob_ref(blob_id)
+    avatar_update: dict[str, Any] = {"avatar_ref": ref}
+    # Uploading a photo is asking for a face. LemonSlice is the vendor that
+    # builds one from a single photo, so a voice-only persona flips to it;
+    # an explicit simli/lemonslice choice is kept.
+    if persona.avatar.provider in ("", "none"):
+        avatar_update["provider"] = "lemonslice"
     updated = persona.model_copy(
-        update={"avatar": persona.avatar.model_copy(update={"avatar_ref": ref})}
+        update={"avatar": persona.avatar.model_copy(update=avatar_update)}
     )
     store.upsert(updated, owner)
     return AvatarUploaded(blob_id=blob_id, avatar_ref=ref)

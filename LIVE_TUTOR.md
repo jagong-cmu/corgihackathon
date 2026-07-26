@@ -71,15 +71,29 @@ npm install && npm run dev                  # http://localhost:5173
 
 ## Creating a custom tutor
 
-1. **Tutors** (header) → fill in the *New tutor* form. Few-shot exchanges are
-   what make the persona stick — three or more real-sounding turns.
+**The fast way (the sidebar modal).** Hamburger → *Create a new tutor* → name,
+webcam photo (or upload), ~10s voice recording (or upload) → **Create tutor**.
+That one button runs the whole pipeline: a synthetic persona in the API, the
+voice cloned on ElevenLabs (Instant Voice Clone), and the photo attached as
+the LemonSlice avatar — the new tutor can immediately hold a live session with
+their own face and voice. Anything that can't complete (API down, cloning
+plan-gated) is reported in the modal and finishable later in the Tutors panel.
+
+**The detailed way (the Tutors panel).**
+
+1. *Create & manage voice tutors* (under the tutor card) → fill in the *New
+   tutor* form. Few-shot exchanges are what make the persona stick — three or
+   more real-sounding turns.
 2. In the tutor's row: **Voice** → pick a library voice (preview first) or
    upload 1–2 min of clean speech to clone (plan-gated; the UI checks).
    *A session can't start for a tutor without a voice.*
-3. Optional: **Avatar** → Simli face ID, or a LemonSlice agent ID / public
-   photo URL. (A publicly reachable URL — the vendor fetches it; photos
-   uploaded to the API's blob store aren't reachable from outside yet.)
-4. Close the panel, pick the tutor in the stage dropdown, **Start session**.
+3. Optional: **Avatar** → upload a photo (stored in the API's blob store; the
+   worker hands the bytes to LemonSlice at session start, so no public URL is
+   needed), or point at a Simli face ID / LemonSlice agent ID / public photo
+   URL.
+4. Close the panel — every tutor with a voice appears in the tutor card's
+   dropdown and in the sidebar roster. Picking one makes them *the* tutor
+   (card, greeting, whiteboard); **Start session** brings them live in place.
 
 ## Degradation map (nothing here hard-fails)
 

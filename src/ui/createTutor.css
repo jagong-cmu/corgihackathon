@@ -276,12 +276,53 @@
   }
 }
 
+/* Creation pipeline status (persona + voice clone + avatar photo). */
+.ct-progress {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin: 0;
+  font: 500 12.5px var(--sans);
+  color: var(--ink-2);
+}
+.ct-spinner {
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  border: 2px solid var(--edge);
+  border-top-color: var(--corgi);
+  animation: ct-spin 0.8s linear infinite;
+}
+@keyframes ct-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.ct-notes {
+  font: 400 12.5px/1.5 var(--sans);
+  color: var(--ink-2);
+  background: var(--paper-2);
+  border: 1px solid var(--edge);
+  border-radius: 10px;
+  padding: 10px 14px;
+}
+.ct-notes-title {
+  margin: 0 0 4px;
+  font-weight: 600;
+  color: var(--ink);
+}
+.ct-notes ul {
+  margin: 0;
+  padding-left: 18px;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .ct-backdrop,
   .ct-card {
     animation: none;
   }
-  .ct-dot {
+  .ct-dot,
+  .ct-spinner {
     animation: none;
   }
   .ct-btn:active {
