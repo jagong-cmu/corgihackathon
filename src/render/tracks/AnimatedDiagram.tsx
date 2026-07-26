@@ -86,7 +86,7 @@ export function AnimatedDiagram({ content, state }: Props) {
               const ux = dx / len;
               const uy = dy / len;
               // Arrowhead: small triangle at the current drawn tip.
-              const head = 3;
+              const head = 3.6;
               const back: Pt = [tip[0] - ux * head, tip[1] - uy * head];
               const nx = -uy;
               const ny = ux;
@@ -112,12 +112,14 @@ export function AnimatedDiagram({ content, state }: Props) {
                   {el.text && (
                     <text
                       x={mid[0]}
-                      y={mid[1] - 1.5}
-                      fontSize={4}
+                      y={mid[1] - 1.8}
+                      fontSize={4.4}
                       fontFamily="system-ui, sans-serif"
+                      fontWeight={600}
                       fill={color}
                       textAnchor="middle"
                       opacity={e}
+                      style={{ paintOrder: "stroke", stroke: "#fefdfa", strokeWidth: 1, strokeLinejoin: "round" }}
                     >
                       {el.text}
                     </text>
@@ -211,6 +213,30 @@ export function AnimatedDiagram({ content, state }: Props) {
               );
             }
 
+            case "icon": {
+              // A single emoji (🏀, 🧑, 🚗, 💧…) — the fastest way to make the
+              // scene RECOGNIZABLE and on-topic. Pops + fades in, then keeps any
+              // moveTo motion so it can visibly accelerate/travel.
+              const at = el.at ?? [0, 0];
+              const pos = el.moveTo ? lerpPt(at, el.moveTo, e) : at;
+              const size = el.size ?? 12;
+              const intro = ease(clamp01(p / (el.moveTo ? 0.22 : 0.35)));
+              const fs = size * lerp(0.55, 1, intro);
+              return (
+                <text
+                  key={el.id}
+                  x={pos[0]}
+                  y={pos[1]}
+                  fontSize={fs}
+                  textAnchor="middle"
+                  dominantBaseline="central"
+                  opacity={el.moveTo ? 1 : intro}
+                >
+                  {el.text ?? "●"}
+                </text>
+              );
+            }
+
             case "label": {
               const at = el.at ?? [0, 0];
               const pos = el.moveTo ? lerpPt(at, el.moveTo, e) : at;
@@ -219,11 +245,14 @@ export function AnimatedDiagram({ content, state }: Props) {
                   key={el.id}
                   x={pos[0]}
                   y={pos[1]}
-                  fontSize={5}
+                  fontSize={el.size ?? 5.5}
                   fontFamily="system-ui, sans-serif"
+                  fontWeight={600}
                   fill={color}
                   textAnchor="middle"
+                  dominantBaseline="central"
                   opacity={e}
+                  style={{ paintOrder: "stroke", stroke: "#fefdfa", strokeWidth: 1, strokeLinejoin: "round" }}
                 >
                   {el.text ?? ""}
                 </text>
@@ -235,20 +264,57 @@ export function AnimatedDiagram({ content, state }: Props) {
           }
         })}
 
-        {/* Caption: centered near the bottom, faded in once anything shows. */}
-        {content.caption && anyRevealed && (
-          <text
-            x={W / 2}
-            y={H - 3}
-            fontSize={5}
-            fontFamily="system-ui, sans-serif"
-            fill={COLORS.ink}
-            textAnchor="middle"
-            opacity={0.85}
-          >
-            {content.caption}
-          </text>
-        )}
+        {/* Caption: wrapped to <=2 lines and auto-fit to the width so a long
+            sentence never clips at the board edges. */}
+        {content.caption &&
+          anyRevealed &&
+          (() => {
+            const maxChars = 44;
+            const words = content.caption.split(/\s+/);
+            const lines: string[] = [];
+            let cur = "";
+            for (const w of words) {
+              const next = cur ? `${cur} ${w}` : w;
+              if (next.length > maxChars && cur) {
+                lines.push(cur);
+                cur = w;
+              } else {
+                cur = next;
+              }
+            }
+            if (cur) lines.push(cur);
+            const shown = lines.slice(0, 2);
+            const longest = Math.max(1, ...shown.map((l) => l.length));
+            // ~0.52 avg glyph width per font unit; shrink to fit W with margin.
+            const fs = Math.max(2.6, Math.min(5, (W - 8) / (longest * 0.52)));
+            const lineH = fs * 1.18;
+            const startY = H - 2.5 - (shown.length - 1) * lineH;
+            return (
+              <g>
+                {shown.map((ln, i) => (
+                  <text
+                    key={i}
+                    x={W / 2}
+                    y={startY + i * lineH}
+                    fontSize={fs}
+                    fontFamily="system-ui, sans-serif"
+                    fontWeight={600}
+                    fill={COLORS.ink}
+                    textAnchor="middle"
+                    opacity={0.92}
+                    style={{
+                      paintOrder: "stroke",
+                      stroke: "#fefdfa",
+                      strokeWidth: fs * 0.28,
+                      strokeLinejoin: "round",
+                    }}
+                  >
+                    {ln}
+                  </text>
+                ))}
+              </g>
+            );
+          })()}
       </svg>
     </div>
   );
