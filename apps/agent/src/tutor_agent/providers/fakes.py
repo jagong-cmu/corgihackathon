@@ -55,6 +55,10 @@ class FakeLLM:
         self.calls: list[dict[str, Any]] = []
         """Every request made, for assertions about prompt assembly."""
 
+        self.tool_events: list[ToolCall] = []
+        """Every ToolCall yielded, AFTER the consumer handled it — so tests
+        can assert on the `error` feedback the session wrote back."""
+
     async def stream_turn(
         self,
         *,
@@ -79,7 +83,9 @@ class FakeLLM:
                     yield TextDelta(text=event[start : start + self._delta_chars])
             else:
                 name, payload = event
-                yield ToolCall(id=f"toolu_fake_{self._index}_{i}", name=name, input=payload)
+                call = ToolCall(id=f"toolu_fake_{self._index}_{i}", name=name, input=payload)
+                yield call
+                self.tool_events.append(call)
 
         yield TurnEnd(stop_reason=turn.stop_reason)
 

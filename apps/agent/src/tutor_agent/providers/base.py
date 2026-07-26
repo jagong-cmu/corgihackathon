@@ -29,13 +29,24 @@ class TextDelta:
     text: str
 
 
-@dataclass(frozen=True)
+@dataclass
 class ToolCall:
-    """A completed tool call. Position in the stream is the cue anchor."""
+    """A completed tool call. Position in the stream is the cue anchor.
+
+    Mutable, unlike the other events: the consumer sets `error` while the
+    generator is suspended at the yield, and the provider reads it back when
+    it resumes to build the tool_result.
+    """
 
     id: str
     name: str
     input: dict[str, Any]
+
+    error: str | None = None
+    """Why the call was rejected (schema validation, unknown action), set by
+    the consumer during the yield. The provider must return it as an is_error
+    tool_result so the model corrects itself and calls again — a success stub
+    here leaves the model revealing steps on a board that never mounted."""
 
 
 @dataclass(frozen=True)

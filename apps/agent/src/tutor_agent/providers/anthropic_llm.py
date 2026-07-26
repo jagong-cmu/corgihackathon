@@ -121,12 +121,18 @@ class AnthropicLLM:
                     )
                     # Ordered relative to the text already yielded above, which
                     # is what anchors the cue.
-                    yield ToolCall(id=block.id, name=block.name, input=dict(block.input))
+                    call = ToolCall(id=block.id, name=block.name, input=dict(block.input))
+                    yield call
+                    # The consumer validated the call during the yield; a
+                    # rejected action goes back as is_error so the model fixes
+                    # the spec and calls again instead of narrating a board
+                    # that never mounted.
                     tool_results.append(
                         {
                             "type": "tool_result",
                             "tool_use_id": block.id,
-                            "content": _STUB_RESULT,
+                            "content": call.error or _STUB_RESULT,
+                            **({"is_error": True} if call.error else {}),
                         }
                     )
 

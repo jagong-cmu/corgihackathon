@@ -128,11 +128,34 @@ class TurnTimeline:
         self._char_count += len(chunk)
 
     def add_action(self, action: dict) -> PendingAction:
-        """Anchor an action at the current position in the text stream."""
-        pending = PendingAction(action=action, char_offset=self._char_count, seq=self._next_seq)
+        """Anchor an action at the current position in the text stream.
+
+        present_visual is the exception: it mounts the spec with every step
+        hidden, so there is nothing on it to sync to the narration — but
+        holding it until the opening words play means a barge-in before that
+        moment kills the whole board (the client drops the still-pending cue
+        with the cancelled turn, and the learner watches the tutor talk at a
+        blank whiteboard). Anchor it to the start of the turn instead; the
+        reveal_step cues that actually draw stay narration-anchored.
+        """
+        offset = 0 if action.get("type") == "present_visual" else self._char_count
+        pending = PendingAction(action=action, char_offset=offset, seq=self._next_seq)
         self._next_seq += 1
         self._pending.append(pending)
         return pending
+
+    def emit_now(self, pending: PendingAction) -> TimedAction:
+        """Resolve `pending` to cue 0 immediately and mark it emitted.
+
+        For actions that wait on no narration (present_visual mounts the
+        board with every step hidden). resolve_ready only releases an action
+        once its segment's timings land, which for the turn's first action
+        means after the whole first sentence has synthesized — dead seconds
+        during which the learner stares at an empty board. Marking the seq
+        emitted keeps resolve_ready/resolve_remaining from sending it twice.
+        """
+        self._emitted.add(pending.seq)
+        return TimedAction(action=pending.action, seq=pending.seq, cue_ms=0)
 
     def attach_timings(self, timings: CharacterTimings) -> None:
         """Attach timings for the next speech segment, in synthesis order."""
