@@ -297,6 +297,18 @@ class CueQueue:
         if self.active_turn_id == turn_id:
             self.active_turn_id = None
 
+    def finish_turn(self, turn_id: str) -> None:
+        """The turn's output is complete — it can no longer be barged into.
+
+        Without this, active_turn_id survives a normally-completed turn and the
+        learner's NEXT utterance (a question, or just room noise) "interrupts"
+        it: the avatar gets a pointless clear-buffer RPC and the client gets a
+        cancel_turn that kills any still-pending reveal_step cues, leaving the
+        board stuck half-revealed.
+        """
+        if self.active_turn_id == turn_id:
+            self.active_turn_id = None
+
     def is_cancelled(self, turn_id: str) -> bool:
         return turn_id in self._cancelled
 

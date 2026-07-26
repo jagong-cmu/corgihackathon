@@ -42,6 +42,15 @@ export interface BoardCue {
 }
 
 /**
+ * Wall-clock slack past a cue's natural fire time before it fires anyway.
+ * The audio clock is the source of truth, but it can die entirely — the
+ * avatar's element detaches, autoplay is blocked, playback stalls — and a cue
+ * that only ever consults a frozen clock freezes the whiteboard with it. A
+ * few seconds late and unsynced beats never.
+ */
+const STALL_SLACK_MS = 3000;
+
+/**
  * Playback position of whichever tutor audio element is current. Rebased on
  * attach: a MediaStream-backed element's currentTime starts counting when the
  * element starts rendering, not when our turn's audio starts, so swapping
@@ -96,8 +105,10 @@ export class LiveCueQueue {
   private readonly clock: PlaybackClock;
   private readonly onFire: (cue: BoardCue) => void;
   private turns = new Map<string, TurnState>();
-  private pending: BoardCue[] = [];
+  private pending: Array<BoardCue & { deadlineAt: number }> = [];
   private activeTurnId: string | null = null;
+  private droppedFrames = 0;
+  private lastDropWarnAt = 0;
 
   constructor(clock: PlaybackClock, onFire: (cue: BoardCue) => void) {
     this.clock = clock;
@@ -106,18 +117,33 @@ export class LiveCueQueue {
 
   /**
    * One raw data-channel payload. Malformed or unknown frames are dropped
-   * silently (§13): a missing arrow is invisible, a crashed board ends the
-   * lesson.
+   * (§13) — a missing arrow is invisible, a crashed board ends the lesson —
+   * but never silently: schema drift between worker and client otherwise
+   * reads as "voice talks, board never draws" with an empty console.
    */
   acceptRaw(payload: Uint8Array): void {
     let raw: unknown;
     try {
       raw = JSON.parse(new TextDecoder().decode(payload));
     } catch {
+      this.noteDrop("unparseable JSON");
       return;
     }
     const message = safeParseAgentMessage(raw);
     if (message) this.accept(message);
+    else this.noteDrop("schema mismatch", raw);
+  }
+
+  private noteDrop(reason: string, raw?: unknown): void {
+    this.droppedFrames += 1;
+    const now = performance.now();
+    if (now - this.lastDropWarnAt > 5000) {
+      this.lastDropWarnAt = now;
+      console.warn(
+        `[cueBridge] dropped ${this.droppedFrames} canvas frame(s); latest: ${reason}`,
+        raw ?? ""
+      );
+    }
   }
 
   accept(message: AgentMessage): void {
@@ -143,11 +169,16 @@ export class LiveCueQueue {
     }
     if (turn.cancelled) return; // late frame for a barged-in turn
 
+    // The wall-clock fallback deadline: how long until the audio clock WOULD
+    // reach this cue if it keeps running, plus slack. A healthy clock always
+    // wins the race; the deadline only fires when playback froze or died.
+    const naturalDelay = Math.max(0, turn.originMs + frame.cueMs - this.clock.positionMs);
     this.pending.push({
       turnId: frame.turnId,
       seq: frame.seq,
       cueMs: frame.cueMs,
       action: frame.action,
+      deadlineAt: performance.now() + naturalDelay + STALL_SLACK_MS,
     });
     this.pending.sort((a, b) => a.cueMs - b.cueMs || a.seq - b.seq);
   }
@@ -169,12 +200,13 @@ export class LiveCueQueue {
   tick(): void {
     if (this.pending.length === 0) return;
     const pos = this.clock.positionMs;
+    const now = performance.now();
 
-    const survivors: BoardCue[] = [];
+    const survivors: Array<BoardCue & { deadlineAt: number }> = [];
     for (const cue of this.pending) {
       const turn = this.turns.get(cue.turnId);
       if (!turn || turn.cancelled) continue;
-      if (pos >= turn.originMs + cue.cueMs) {
+      if (pos >= turn.originMs + cue.cueMs || now >= cue.deadlineAt) {
         this.onFire(cue);
       } else {
         survivors.push(cue);

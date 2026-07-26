@@ -4,6 +4,10 @@
   "version": "0.1.0",
   "type": "module",
   "description": "Visual/animation subsystem for an AI voice tutor. Renders a versioned Visual Spec (JSON) as draw-on whiteboard animations.",
+  "workspaces": [
+    "packages/canvas-protocol",
+    "tools/cue-inspector"
+  ],
   "scripts": {
     "dev": "vite --host",
     "build": "tsc -b && vite build",
@@ -15,6 +19,7 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.115.0",
+    "@tutor/canvas-protocol": "*",
     "adm-zip": "^0.6.0",
     "animejs": "^3.2.2",
     "katex": "^0.16.11",

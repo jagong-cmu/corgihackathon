@@ -75,6 +75,10 @@ export interface TutorOption {
  * database. Shown when the persona API is unreachable.
  */
 export const BUILTIN_TUTORS: TutorOption[] = [
+  // Nico is the home page's default tutor (TutorContext DEFAULT_PERSONA_ID) —
+  // if it's missing from this floor list, a persona-API outage leaves the
+  // default seat empty and the Start button dead.
+  { id: "nico", name: "Nico", hasVoice: true, avatarProvider: "lemonslice", photoUrl: null },
   { id: "ada", name: "Ada", hasVoice: true, avatarProvider: "lemonslice", photoUrl: null },
   { id: "coach-rios", name: "Coach Rios", hasVoice: true, avatarProvider: "simli", photoUrl: null },
 ];

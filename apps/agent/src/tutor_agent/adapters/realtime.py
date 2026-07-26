@@ -41,6 +41,11 @@ class LiveKitAdapter:
 
     room: rtc.Room
     audio_source: rtc.AudioSource | None = None
+    audio_rerouted: bool = False
+    """True while an avatar carries the tutor's audio instead of our own track.
+    send_audio still gets called (the session pushes to both sinks), so a None
+    audio_source is expected then, not a bug worth one warning per chunk."""
+
     _caps: ChannelCapabilities = field(default_factory=ChannelCapabilities.realtime)
     _splitter: PcmStreamSplitter = field(
         default_factory=lambda: PcmStreamSplitter(
@@ -68,7 +73,8 @@ class LiveKitAdapter:
         oversized frame can't be cut short by `clear_queue` on barge-in.
         """
         if self.audio_source is None:
-            log.warning("send_audio called before the audio track was published")
+            if not self.audio_rerouted:
+                log.warning("send_audio called before the audio track was published")
             return
         for block in self._splitter.feed(audio):
             await self.audio_source.capture_frame(

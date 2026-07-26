@@ -14,3 +14,4 @@ dist-ssr
 __pycache__/
 *.pyc
 .gstack/
+tsconfig.tsbuildinfo

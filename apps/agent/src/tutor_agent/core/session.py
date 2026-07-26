@@ -15,6 +15,7 @@ Nothing here knows about WebRTC, SMS, or LiveKit. That is the point.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from collections.abc import Sequence
@@ -35,7 +36,7 @@ from ..providers.base import (
 )
 from .channel import ChannelAdapter
 from .chunking import SentenceChunker
-from .cue import CharacterTimings, CueQueue, TimedAction, TurnTimeline
+from .cue import CharacterTimings, CueQueue, TimedAction, TurnTimeline, synthetic_timings
 from .protocol import WHITEBOARD_ACTIONS, canvas_tool_definitions, validate_action
 
 log = logging.getLogger(__name__)
@@ -134,6 +135,13 @@ class TutorSession:
         self._history: list[dict[str, Any]] = []
         self._turn_counter = 0
         self._cues = CueQueue()
+        # (turn_id, playout end estimate) of the last completed turn. Synthesis
+        # finishes long before the learner has HEARD the audio, so barge-in must
+        # keep working for the playout tail after finish_turn clears the active
+        # turn — but not a moment longer, or ambient room noise "interrupts" an
+        # idle tutor forever (clear-buffer RPCs to the avatar, cancel_turn to
+        # the client) without a word being spoken.
+        self._playing_out: tuple[str, float] | None = None
         toolset = self.config.toolset
         self._tools = canvas_tool_definitions(
             only=WHITEBOARD_ACTIONS if toolset == "whiteboard" else None
@@ -156,8 +164,13 @@ class TutorSession:
         if self.retrieval is None:
             return None
         try:
-            chunks = await self.retrieval.search(
-                query, principal=self.principal, limit=self.config.retrieval_limit
+            # Bounded: this await sits on the turn's critical path, ahead of
+            # the first spoken word, and the budget is 1.2s end to end.
+            chunks = await asyncio.wait_for(
+                self.retrieval.search(
+                    query, principal=self.principal, limit=self.config.retrieval_limit
+                ),
+                timeout=1.0,
             )
         except Exception:
             # Same rule as opening the index: a broken database makes a worse
@@ -186,7 +199,17 @@ class TutorSession:
         if superseded is not None:
             # A new turn started while the last one was still in flight. Its
             # unfired cues are dead (§4) and so is its audio.
+            self._playing_out = None
             await self._interrupt_output(superseded, "barge_in")
+        else:
+            # The previous turn finished generating, but its audio may still be
+            # playing out — a fast follow-up must stop it like a barge-in would,
+            # or the two answers overlap.
+            playing = self._playing_out
+            if playing is not None:
+                self._playing_out = None
+                if time.perf_counter() < playing[1]:
+                    await self._interrupt_output(playing[0], "barge_in")
 
         context = await self._retrieve(transcript)
         messages = self._build_messages(transcript, context)
@@ -272,9 +295,21 @@ class TutorSession:
         # Anything anchored past the end of speech fires at the end of audio.
         await self._emit(turn_id, timeline.resolve_remaining())
 
-        # Speech is done, so release the sub-frame tail the adapter is holding.
+        # Speech is done, so release the sub-frame tail the adapter is holding,
+        # and close the avatar's stream segment — the avatar transport can only
+        # survive the next barge-in at a segment boundary.
         if streams_audio:
             await self.channel.flush_audio()
+            if self.avatar is not None:
+                await self.avatar.flush()
+
+        # This turn can no longer be barged into as an ACTIVE turn, but its
+        # audio is still playing out client-side — keep interrupting it until
+        # the estimated playout end (see barge_in).
+        self._cues.finish_turn(turn_id)
+        if first_audio_ms is not None:
+            playout_end = started + (first_audio_ms + timeline.total_duration_ms) / 1000 + 0.25
+            self._playing_out = (turn_id, playout_end)
 
         speech = timeline.speech_text
         self._history.append({"role": "user", "content": transcript})
@@ -337,15 +372,20 @@ class TutorSession:
 
         joined = "".join(characters)
         if joined != text:
-            # Losing alignment means losing cue timing for this segment, but the
-            # audio already played — degrade to unanchored rather than crash.
+            # The audio already played, so crash is off the table — but simply
+            # dropping the timings would shift EVERY later segment's anchors
+            # (segment offsets are cumulative over attached character counts).
+            # Attach estimated timings for the exact text instead: this
+            # segment's cues land approximately, and the rest of the turn stays
+            # correctly anchored.
             log.warning(
                 "alignment mismatch in %s: sent %d chars, aligned %d. "
-                "Cues in this segment will be unanchored.",
+                "Using estimated timings for this segment.",
                 timeline.turn_id,
                 len(text),
                 len(joined),
             )
+            timeline.attach_timings(synthetic_timings(text))
             return
         timeline.attach_timings(CharacterTimings(characters=joined, start_ms=starts, end_ms=ends))
 
@@ -357,12 +397,27 @@ class TutorSession:
     # -- lifecycle ----------------------------------------------------------
 
     async def barge_in(self) -> None:
-        """The learner started talking. Kill the current turn's output."""
+        """The learner started talking. Kill the current turn's output.
+
+        Two cases matter and only these two — a turn still generating, and a
+        finished turn whose audio is still playing out. When the tutor is
+        actually idle this must be a no-op: START_OF_SPEECH fires on every
+        scrap of room noise, and interrupting an idle session means a
+        clear-buffer RPC to the avatar and a cancel_turn to the client per
+        scrap, for nothing.
+        """
         turn_id = self._cues.active_turn_id
-        if turn_id is None:
+        if turn_id is not None:
+            self._cues.cancel(turn_id)
+            self._playing_out = None
+            await self._interrupt_output(turn_id, "barge_in")
             return
-        self._cues.cancel(turn_id)
-        await self._interrupt_output(turn_id, "barge_in")
+
+        playing = self._playing_out
+        if playing is not None:
+            self._playing_out = None
+            if time.perf_counter() < playing[1]:
+                await self._interrupt_output(playing[0], "barge_in")
 
     async def _interrupt_output(self, turn_id: str, reason: str) -> None:
         """Stop everything the learner can currently see or hear.
