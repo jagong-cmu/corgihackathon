@@ -4,3 +4,13 @@ dist/
 *.log
 .env
 .env.local
+.gstack/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+
+# uv.lock IS committed — it pins the agent's dependency graph.
