@@ -3,6 +3,22 @@
 All notable changes to Chalk are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/) · versions are `MAJOR.MINOR.PATCH.MICRO`.
 
+## [0.1.3.0] - 2026-07-26
+
+### Fixed
+- The whiteboard now draws while the tutor talks, reliably. The board takeover
+  (`present_visual`) fires the moment the answer's audio starts instead of
+  several seconds into the narration — interrupting the tutor no longer
+  strands a blank board, because the visual is already up before you can
+  barge in. Step reveals stay word-synced to the narration.
+- A tutor whose drawing was rejected by the spec validator now hears about it
+  and redraws: validation errors return to the model as tool errors instead
+  of a silent success, so an invalid visual gets corrected in the same turn
+  rather than leaving the tutor narrating an empty board.
+- After an interruption, the tutor's next real answer re-presents or keeps
+  building the visual instead of leaving the board stale; quick computations
+  now land on the board too.
+
 ## [0.1.1.0] - 2026-07-26
 
 ### Changed
