@@ -1,0 +1,25 @@
+# One-click deploy (Render Blueprint).
+#
+# Steps:
+#   1. Push this repo to GitHub (done).
+#   2. In Render: New +  ->  Blueprint  ->  pick this repo. Render reads this file.
+#   3. When prompted, paste your Anthropic key into the ANTHROPIC_API_KEY field
+#      (it is a SECRET — intentionally NOT stored in this file or the repo).
+#   4. Create. You get a permanent https URL that is always "live" for everyone,
+#      with no per-user key.
+#
+# Optional secrets for the extra features (leave unset to disable gracefully):
+#   MERGE_API_KEY / MERGE_ACCOUNT_TOKEN  -> Merge document sync
+#   LIVEKIT_URL / LIVEKIT_API_KEY / LIVEKIT_API_SECRET -> live voice/avatar
+services:
+  - type: web
+    name: chalk
+    runtime: docker
+    plan: free
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: WHITEBOARD_LLM_MODEL
+        value: claude-opus-4-8
