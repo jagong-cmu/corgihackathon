@@ -1,7 +1,6 @@
 # Dependencies for the Vercel Python function api/tutor-api.py.
-# Both apps are local packages. Explicit `name @ relative-path` form:
-# Vercel's installer (uv) infers the name from the directory for bare paths
-# ("agent" != tutor-agent) and mangles file:./ URLs into literal paths —
-# name @ ./path is the one spelling its resolver takes verbatim.
-tutor-agent[elevenlabs,db] @ ./apps/agent
+# Just the API package: its pyproject already depends on tutor-agent (via a
+# [tool.uv.sources] editable path) and carries psycopg/httpx directly, and
+# naming tutor-agent here a second time makes uv reject the lock as
+# "conflicting URLs" (editable vs not).
 tutor-api @ ./apps/api
