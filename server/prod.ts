@@ -16,7 +16,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { readFile, stat } from "node:fs/promises";
 import { extname, join, normalize } from "node:path";
 import { runTurn } from "./turn";
-import { createLiveSession, liveKitConfigured } from "./live";
+import { createLiveSession, liveKitConfigured } from "../api/_lib/live";
 import { llmAvailable } from "./llm";
 import { checkContentBodyAvailable, mergeSyncIngest, mergeConfigured } from "./merge";
 import { ingestDocument, listMaterials, corpusSize, provider, retrieve } from "./rag";
