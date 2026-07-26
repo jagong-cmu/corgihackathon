@@ -120,6 +120,9 @@ class TurnTimeline:
         self._segments: list[CharacterTimings] = []
         self._next_seq = 0
         self._emitted: set[int] = set()
+        self._presented = False
+        """Whether a present_visual was already anchored this turn — only the
+        FIRST one gets the start-of-turn anchor (see add_action)."""
 
     # -- stream consumption -------------------------------------------------
 
@@ -128,8 +131,26 @@ class TurnTimeline:
         self._char_count += len(chunk)
 
     def add_action(self, action: dict) -> PendingAction:
-        """Anchor an action at the current position in the text stream."""
-        pending = PendingAction(action=action, char_offset=self._char_count, seq=self._next_seq)
+        """Anchor an action at the current position in the text stream.
+
+        present_visual is the exception: it mounts the spec with every step
+        hidden, so there is nothing on it to sync to the narration — but
+        holding it until the opening words play means a barge-in before that
+        moment kills the whole board (the client drops the still-pending cue
+        with the cancelled turn, and the learner watches the tutor talk at a
+        blank whiteboard). Anchor it to the start of the turn instead; the
+        reveal_step cues that actually draw stay narration-anchored.
+
+        Only the FIRST present_visual of the turn gets that anchor: a
+        replacement board mid-turn anchored at 0 would sort BEFORE the first
+        board's reveals in resolve() (and fire instantly on the live path),
+        clobbering the board the narration is still pointing at.
+        """
+        is_first_board = action.get("type") == "present_visual" and not self._presented
+        if is_first_board:
+            self._presented = True
+        offset = 0 if is_first_board else self._char_count
+        pending = PendingAction(action=action, char_offset=offset, seq=self._next_seq)
         self._next_seq += 1
         self._pending.append(pending)
         return pending
