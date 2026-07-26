@@ -1,7 +1,7 @@
 {
   "name": "corgihackathon-whiteboard",
   "private": true,
-  "version": "0.1.1",
+  "version": "0.1.0",
   "type": "module",
   "description": "Visual/animation subsystem for an AI voice tutor. Renders a versioned Visual Spec (JSON) as draw-on whiteboard animations.",
   "scripts": {
