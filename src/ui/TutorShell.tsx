@@ -14,7 +14,7 @@ import { WhiteboardRenderer } from "../render/WhiteboardRenderer";
 import type { RevealApi } from "../voice/voiceInterface";
 import {
   functionPlotExample,
-  trudyExample,
+  freeformExample,
   brokenExample,
 } from "../spec/examples";
 import type { VisualSpec } from "../spec/visualSpec";
@@ -26,31 +26,36 @@ interface Demo {
   spec: unknown;
 }
 
+/**
+ * Developer test scenes. These are NOT product features — they exist only to
+ * exercise the renderer (deterministic track, freeform track, fallback). The
+ * real product drives the renderer from live LLM-emitted specs (Phase 2+).
+ */
 const DEMOS: Demo[] = [
   {
     key: "fn",
-    label: "Track 1 · graph x² + tangent",
+    label: "Deterministic · function plot + tangent",
     spokenText:
       "Here's the graph of x squared. Watch as I draw the curve, then the tangent at x equals one.",
     spec: functionPlotExample satisfies VisualSpec,
   },
   {
-    key: "trudy",
-    label: "Track 2 · Trudy explains Corgi (stub)",
+    key: "freeform",
+    label: "Freeform · animated mascot (placeholder rig)",
     spokenText:
-      "Let me introduce Trudy. She'll show you what Corgi does, one step at a time.",
-    spec: trudyExample satisfies VisualSpec,
+      "This is the freeform track: an animated guide reveals an explanation one step at a time.",
+    spec: freeformExample satisfies VisualSpec,
   },
   {
     key: "broken",
-    label: "Guardrail · invalid spec → KaTeX fallback",
+    label: "Fallback · invalid spec → equation",
     spokenText:
       "This spec is intentionally broken — the renderer should fall back to an equation, not a blank screen.",
     spec: brokenExample,
   },
 ];
 
-/** Initial demo from ?demo= so each demo is directly linkable/testable. */
+/** Initial scene from ?demo= so each test scene is directly linkable. */
 function initialDemoKey(): string {
   if (typeof window === "undefined") return DEMOS[0].key;
   const q = new URLSearchParams(window.location.search).get("demo");
@@ -81,9 +86,9 @@ export function TutorShell() {
   return (
     <div className="tutor-shell">
       <header className="tutor-header">
-        <div className="brand">🐕‍🦺 Whiteboard <span>· AI Tutor visual subsystem</span></div>
+        <div className="brand">Whiteboard <span>· AI tutor visual subsystem</span></div>
         <div className="controls">
-          <label className="control-label">Demo:</label>
+          <label className="control-label">Test scene:</label>
           <select
             value={demoKey}
             onChange={(e) => selectDemo(e.target.value)}

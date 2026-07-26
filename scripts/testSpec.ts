@@ -7,7 +7,7 @@
 import { validateVisualSpec } from "../src/spec/validate";
 import {
   functionPlotExample,
-  trudyExample,
+  freeformExample,
   brokenExample,
 } from "../src/spec/examples";
 import { compileFn, derivativeAt } from "../src/render/mathfn";
@@ -25,9 +25,9 @@ function check(name: string, cond: boolean, detail?: string) {
   check("valid function_plot validates", r.ok, r.ok ? "" : r.error);
 }
 
-// 2. Valid freeform_scene (Trudy) passes.
+// 2. Valid freeform_scene passes.
 {
-  const r = validateVisualSpec(trudyExample);
+  const r = validateVisualSpec(freeformExample);
   check("valid freeform_scene validates", r.ok, r.ok ? "" : r.error);
 }
 

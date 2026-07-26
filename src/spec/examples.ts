@@ -42,19 +42,20 @@ export const brokenExample = {
 } as unknown as VisualSpec;
 
 /**
- * Track 2 placeholder for the hero demo (fully rendered in Phase 4/5).
- * Included now so the freeform path type-checks and has a stub renderer.
+ * Track 2 test scene (freeform). Generic, subject-agnostic content used only to
+ * exercise the freeform renderer + reveal mechanic. The mascot rig is a
+ * placeholder pending a product decision on the character (see Trudy.tsx).
  */
-export const trudyExample: VisualSpec = {
+export const freeformExample: VisualSpec = {
   specVersion: 1,
   track: "freeform",
   primitive: "freeform_scene",
   content: {
-    mascot: "trudy",
+    mascot: "placeholder",
     beats: [
-      { id: "b1", caption: "Corgi helps insurers move fast", pose: "wave", expression: "happy" },
-      { id: "b2", caption: "It connects data across their tools", pose: "point", expression: "think" },
-      { id: "b3", caption: "So teams ship in days, not months", pose: "cheer", expression: "happy" },
+      { id: "b1", caption: "Meet your guide for this lesson", pose: "wave", expression: "happy" },
+      { id: "b2", caption: "We'll take one idea at a time", pose: "point", expression: "think" },
+      { id: "b3", caption: "Revealed in sync with the narration", pose: "cheer", expression: "happy" },
     ],
   },
   drawSequence: [

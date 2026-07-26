@@ -8,5 +8,7 @@ export default defineConfig({
     host: true,
     port: 5173,
     strictPort: false,
+    // Allow the app to be served through dev tunnels (e.g. *.trycloudflare.com).
+    allowedHosts: true,
   },
 });

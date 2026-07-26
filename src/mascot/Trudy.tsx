@@ -9,9 +9,10 @@
  *   - Parts are animated deterministically with animejs (no generative SVG on
  *     the demo path), so the mascot is consistent turn-to-turn.
  *
- * This stub renders a recognizable-but-minimal Trudy so the freeform scene and
- * layout can be wired now; Phase 4 replaces the placeholder art + adds animejs
- * pose/expression transitions.
+ * This stub renders a recognizable-but-minimal placeholder so the freeform
+ * scene and layout can be wired now; Phase 4 replaces the placeholder art +
+ * adds animejs pose/expression transitions. The final character is a pending
+ * product decision.
  */
 export type TrudyPose = "idle" | "wave" | "point" | "cheer";
 export type TrudyExpression = "neutral" | "happy" | "think";
@@ -33,7 +34,7 @@ export function Trudy({ pose = "idle", expression = "neutral", size = 220 }: Pro
       height={size}
       viewBox="0 0 220 220"
       role="img"
-      aria-label={`Trudy the corgi (${pose}, ${expression})`}
+      aria-label={`Lesson mascot — placeholder rig (${pose}, ${expression})`}
     >
       {/* body */}
       <g id="trudy-body">
