@@ -9,18 +9,23 @@
     "build": "tsc -b && vite build",
     "preview": "vite preview --host",
     "typecheck": "tsc -b --noEmit false",
-    "test:spec": "tsx scripts/testSpec.ts"
+    "test:spec": "tsx scripts/testSpec.ts",
+    "test:rag": "tsx scripts/testRag.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.115.0",
+    "adm-zip": "^0.6.0",
     "animejs": "^3.2.2",
     "katex": "^0.16.11",
     "mafs": "^0.21.0",
+    "mammoth": "^1.12.0",
+    "pdf-parse": "^2.4.5",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "zod": "^3.23.8"
   },
   "devDependencies": {
+    "@types/adm-zip": "^0.5.8",
     "@types/animejs": "^3.1.12",
     "@types/katex": "^0.16.7",
     "@types/node": "^20.19.43",
