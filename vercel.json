@@ -1,0 +1,5 @@
+{
+  "rewrites": [
+    { "source": "/tutor-api/:path*", "destination": "/api/tutor-api" }
+  ]
+}
