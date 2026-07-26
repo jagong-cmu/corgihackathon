@@ -1,14 +1,46 @@
 {
   "name": "tutor",
   "private": true,
+  "version": "0.1.0",
   "type": "module",
+  "description": "AI voice tutor. The repo root hosts the whiteboard app (Visual Spec renderer); the voice agent, API, shared protocol, and debug tooling live in the apps/, packages/, and tools/ workspaces.",
   "workspaces": [
     "apps/*",
     "packages/*",
     "tools/*"
   ],
   "scripts": {
-    "build": "npm run build --workspaces --if-present",
+    "dev": "vite --host",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview --host",
+    "typecheck": "tsc -b --noEmit false",
+    "test:spec": "tsx scripts/testSpec.ts",
+    "test:rag": "tsx scripts/testRag.ts",
+    "build:workspaces": "npm run build --workspaces --if-present",
     "test": "npm run test --workspaces --if-present"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.115.0",
+    "adm-zip": "^0.6.0",
+    "animejs": "^3.2.2",
+    "katex": "^0.16.11",
+    "mafs": "^0.21.0",
+    "mammoth": "^1.12.0",
+    "pdf-parse": "^2.4.5",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/adm-zip": "^0.5.8",
+    "@types/animejs": "^3.1.12",
+    "@types/katex": "^0.16.7",
+    "@types/node": "^20.19.43",
+    "@types/react": "^18.3.3",
+    "@types/react-dom": "^18.3.0",
+    "@vitejs/plugin-react": "^4.3.1",
+    "tsx": "^4.16.2",
+    "typescript": "^5.5.3",
+    "vite": "^5.4.0"
   }
 }
