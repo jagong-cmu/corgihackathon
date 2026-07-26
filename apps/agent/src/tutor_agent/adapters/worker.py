@@ -253,16 +253,6 @@ async def entrypoint(ctx: agents.JobContext) -> None:
     ) -> None:
         _maybe_transcribe(track, participant.identity)
 
-    # The learner usually joins and publishes their microphone while we are
-    # still loading the persona or inside the avatar handshake — seconds during
-    # which track_subscribed fires with no handler attached. Sweep what is
-    # already in the room, or an early microphone never reaches STT and the
-    # tutor spends the whole session deaf.
-    for remote in ctx.room.remote_participants.values():
-        for publication in remote.track_publications.values():
-            if publication.track is not None:
-                _maybe_transcribe(publication.track, remote.identity)
-
     async def _transcribe(track: rtc.Track) -> None:
         """Stream the learner's audio through Scribe v2 and drive turns."""
         stream = stt.stream()
@@ -301,6 +291,22 @@ async def entrypoint(ctx: agents.JobContext) -> None:
             # Not awaited: the STT loop must keep consuming so barge-in during
             # the tutor's reply still registers.
             asyncio.create_task(run_turn(text))
+
+    # The learner usually joins and publishes their microphone while we are
+    # still loading the persona or inside the avatar handshake — seconds during
+    # which track_subscribed fires with no handler attached. Sweep what is
+    # already in the room, or an early microphone never reaches STT and the
+    # tutor spends the whole session deaf. LAST in the entrypoint: the sweep
+    # runs immediately, so everything it reaches (transitively: _transcribe,
+    # _on_speech_event, run_turn) must already be bound — and a failed sweep
+    # must degrade to event-driven subscriptions, never kill the session.
+    try:
+        for remote in ctx.room.remote_participants.values():
+            for publication in remote.track_publications.values():
+                if publication.track is not None:
+                    _maybe_transcribe(publication.track, remote.identity)
+    except Exception:
+        log.exception("initial track sweep failed — relying on live subscriptions only")
 
 
 def main() -> None:
