@@ -23,17 +23,55 @@ from ..core.session import SessionConfig, TutorSession
 from ..persona import get_persona
 from ..providers.anthropic_llm import AnthropicLLM
 from ..providers.elevenlabs import ElevenLabsTTS
-from ..providers.simli_avatar import (
-    AVATAR_IDENTITY,
-    SIMLI_SAMPLE_RATE,
+from ..providers.livekit_avatar import (
+    AVATAR_SAMPLE_RATE,
+    AvatarCredentials,
+    LemonSliceAvatar,
+    LemonSliceConfig,
+    LiveKitAvatar,
     SimliAvatar,
     SimliConfig,
+    known_avatar_identities,
 )
 from .realtime import CANVAS_TOPIC, NUM_CHANNELS, SAMPLE_RATE, LiveKitAdapter
 
 log = logging.getLogger("tutor.worker")
 
 DEFAULT_PERSONA = os.environ.get("TUTOR_PERSONA", "ada")
+
+# End-of-user-speech to first tutor audio (§4).
+BUDGET_MS = 1200
+
+
+def _round(value: float | None) -> float | None:
+    return None if value is None else round(value, 1)
+
+
+class TurnMetricsSink:
+    """Append one JSON object per turn to TUTOR_METRICS_PATH.
+
+    A live session is the only place the latency numbers exist, and reading them
+    out of scrollback afterwards does not work — you want to sort by
+    firstAudioMs, not scroll. Disabled unless the path is set, and a broken sink
+    must never take down a session, so write errors are logged once and dropped.
+    """
+
+    def __init__(self, path: str | None) -> None:
+        self.path = path
+        self._warned = False
+        if path:
+            log.info("writing per-turn metrics to %s", path)
+
+    def record(self, row: dict) -> None:
+        if not self.path:
+            return
+        try:
+            with open(self.path, "a", encoding="utf-8") as handle:
+                handle.write(json.dumps(row) + "\n")
+        except OSError as exc:
+            if not self._warned:
+                log.warning("metrics sink disabled: %s", exc)
+                self._warned = True
 
 # Scribe v2 Realtime input rate. Distinct from SAMPLE_RATE, which is the 48kHz
 # output rate we publish at.
@@ -67,6 +105,7 @@ async def entrypoint(ctx: agents.JobContext) -> None:
     )
 
     adapter = LiveKitAdapter(room=ctx.room, audio_source=source)
+    pool, retrieval = await _maybe_open_retrieval()
     session = TutorSession(
         persona=persona,
         llm=AnthropicLLM(model="claude-sonnet-5", effort="low"),
@@ -76,8 +115,12 @@ async def entrypoint(ctx: agents.JobContext) -> None:
             output_format=f"pcm_{SAMPLE_RATE}",
         ),
         channel=adapter,
+        retrieval=retrieval,
         config=SessionConfig(),
+        user_id=os.environ.get("TUTOR_USER_ID", "dev"),
     )
+    if pool is not None:
+        ctx.add_shutdown_callback(pool.close)
 
     stt = lk_elevenlabs.STT(
         use_realtime=True,
@@ -94,33 +137,66 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         session.avatar = avatar
         session.tts = ElevenLabsTTS(
             api_key=os.environ["ELEVENLABS_API_KEY"],
-            output_format=f"pcm_{SIMLI_SAMPLE_RATE}",
+            output_format=f"pcm_{AVATAR_SAMPLE_RATE}",
         )
-        log.info("avatar active — audio routed through Simli at %dHz", SIMLI_SAMPLE_RATE)
+        log.info(
+            "avatar active (%s) — audio routed through it at %dHz",
+            persona.avatar.provider,
+            AVATAR_SAMPLE_RATE,
+        )
 
     turn_lock = asyncio.Lock()
     speech_ended_at: float | None = None
+    metrics = TurnMetricsSink(os.environ.get("TUTOR_METRICS_PATH"))
 
     async def run_turn(transcript: str) -> None:
         """One turn. Serialized so a fast follow-up queues instead of racing."""
         nonlocal speech_ended_at
         async with turn_lock:
             started = time.perf_counter()
+            # STT finalization is dead time the learner hears as silence, and
+            # TurnResult can't see it — measure it here or not at all.
+            stt_finalize_ms = (
+                (started - speech_ended_at) * 1000 if speech_ended_at is not None else None
+            )
             result = await session.handle_transcript(transcript)
+            wall_ms = (time.perf_counter() - started) * 1000
 
-            if result.first_audio_ms is not None:
-                # Budget is measured from end-of-user-speech, not turn start.
-                base = speech_ended_at if speech_ended_at is not None else started
-                total = (started - base) * 1000 + result.first_audio_ms
-                verdict = "OK" if total <= 1200 else "OVER"
+            total = (
+                (stt_finalize_ms or 0.0) + result.first_audio_ms
+                if result.first_audio_ms is not None
+                else None
+            )
+            if total is not None:
                 log.info(
-                    "turn %s first-audio %.0fms (%s, budget 1200ms) actions=%d dropped=%d",
+                    "turn %s first-audio %.0fms (%s, budget %dms) actions=%d dropped=%d",
                     result.turn_id,
                     total,
-                    verdict,
+                    "OK" if total <= BUDGET_MS else "OVER",
+                    BUDGET_MS,
                     len(result.actions),
                     len(result.dropped_actions),
                 )
+            metrics.record(
+                {
+                    "turnId": result.turn_id,
+                    "persona": persona.id,
+                    "avatar": persona.avatar.provider if avatar is not None else None,
+                    "transcriptChars": len(transcript),
+                    # The three legs of the budget, separated so a regression
+                    # points at a subsystem instead of at "the loop got slower".
+                    "sttFinalizeMs": _round(stt_finalize_ms),
+                    "modelToFirstAudioMs": _round(result.first_audio_ms),
+                    "firstAudioMs": _round(total),
+                    "withinBudget": None if total is None else total <= BUDGET_MS,
+                    "turnWallMs": _round(wall_ms),
+                    "actions": len(result.actions),
+                    "droppedActions": [name for name, _ in result.dropped_actions],
+                    "cancelled": result.cancelled,
+                    "stopReason": result.stop_reason,
+                    "speechChars": len(result.speech_text),
+                }
+            )
             speech_ended_at = None
 
     # -- inbound: student events from the canvas client ---------------------
@@ -148,7 +224,7 @@ async def entrypoint(ctx: agents.JobContext) -> None:
     ) -> None:
         if track.kind != rtc.TrackKind.KIND_AUDIO:
             return
-        if participant.identity == AVATAR_IDENTITY:
+        if participant.identity in known_avatar_identities():
             # The avatar publishes audio on our behalf; transcribing it would
             # make the tutor answer itself.
             return
@@ -206,32 +282,85 @@ if __name__ == "__main__":
     main()
 
 
-async def _maybe_start_avatar(ctx: agents.JobContext, persona) -> SimliAvatar | None:
-    """Start the avatar if the persona wants one and credentials are present.
+async def _maybe_open_retrieval():
+    """Open the sync-plane index if one is configured, else run without it.
 
-    Returns None rather than raising: a missing key or a Simli outage should
+    Returns (pool, provider). Retrieval is optional the same way the avatar is:
+    a tutor with no indexed materials is a worse tutor, not a broken one, and
+    a database that is down must not take the voice loop with it.
+
+    The pool is opened once per worker process, not per turn — connection setup
+    does not fit inside the 150ms in-loop budget (§4).
+    """
+    dsn = os.environ.get("DATABASE_URL")
+    if not dsn:
+        log.info("retrieval disabled — set DATABASE_URL to teach from synced materials")
+        return None, None
+
+    try:
+        import asyncpg
+
+        from ..retrieval.embeddings import HashingEmbeddings, VoyageEmbeddings
+        from ..retrieval.pgvector import PgVectorRetrieval
+
+        voyage_key = os.environ.get("VOYAGE_API_KEY")
+        if voyage_key:
+            embeddings = VoyageEmbeddings(api_key=voyage_key)
+        else:
+            # Lexical, not semantic. Fine for a local demo, wrong for a real
+            # session — say so rather than quietly returning bad matches.
+            log.warning(
+                "VOYAGE_API_KEY unset — falling back to hashing embeddings. "
+                "Retrieval will be keyword-ish, not semantic."
+            )
+            embeddings = HashingEmbeddings()
+
+        pool = await asyncpg.create_pool(dsn, min_size=1, max_size=4)
+        log.info("retrieval enabled against %s", dsn.rsplit("@", 1)[-1])
+        return pool, PgVectorRetrieval(pool=pool, embeddings=embeddings)
+    except Exception:
+        log.exception("could not open retrieval — continuing without indexed materials")
+        return None, None
+
+
+async def _maybe_start_avatar(ctx: agents.JobContext, persona) -> LiveKitAvatar | None:
+    """Start the avatar the persona asks for, if credentials are present.
+
+    Returns None rather than raising: a missing key or a vendor outage should
     degrade the session to voice-only, not end it.
     """
-    if persona.avatar.provider != "simli":
+    provider = persona.avatar.provider
+    if provider in (None, "", "none"):
         return None
 
-    api_key = os.environ.get("SIMLI_API_KEY")
-    face_id = persona.avatar.avatar_ref or os.environ.get("SIMLI_FACE_ID")
-    if not api_key or not face_id:
-        log.info("avatar disabled — set SIMLI_API_KEY and SIMLI_FACE_ID to enable")
-        return None
-
-    avatar = SimliAvatar(
-        config=SimliConfig(api_key=api_key, face_id=face_id),
+    credentials = AvatarCredentials(
         room=ctx.room,
         local_identity=ctx.local_participant_identity,
         livekit_url=os.environ["LIVEKIT_URL"],
         livekit_api_key=os.environ["LIVEKIT_API_KEY"],
         livekit_api_secret=os.environ["LIVEKIT_API_SECRET"],
     )
-    try:
-        await avatar.start(avatar_ref=face_id)
-    except Exception:
-        log.exception("avatar failed to start — continuing voice-only")
+
+    avatar: LiveKitAvatar
+    if provider == "lemonslice":
+        api_key = os.environ.get("LEMONSLICE_API_KEY")
+        if not api_key:
+            log.info("avatar disabled — set LEMONSLICE_API_KEY to enable")
+            return None
+        ref = persona.avatar.avatar_ref or os.environ.get("LEMONSLICE_AVATAR_REF", "")
+        avatar = LemonSliceAvatar(config=LemonSliceConfig(api_key=api_key), credentials=credentials)
+    elif provider == "simli":
+        api_key = os.environ.get("SIMLI_API_KEY")
+        ref = persona.avatar.avatar_ref or os.environ.get("SIMLI_FACE_ID", "")
+        if not api_key or not ref:
+            log.info("avatar disabled — set SIMLI_API_KEY and SIMLI_FACE_ID to enable")
+            return None
+        avatar = SimliAvatar(
+            config=SimliConfig(api_key=api_key, face_id=ref), credentials=credentials
+        )
+    else:
+        log.warning("persona %s asks for unknown avatar provider %r", persona.id, provider)
         return None
-    return avatar
+
+    await avatar.start(avatar_ref=ref)
+    return avatar if avatar.is_active else None

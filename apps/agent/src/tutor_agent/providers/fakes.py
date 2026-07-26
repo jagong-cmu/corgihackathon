@@ -17,6 +17,7 @@ from ..core.cue import CharacterTimings, synthetic_timings
 from .base import (
     AudioChunk,
     Chunk,
+    Principal,
     StreamEvent,
     SynthesisResult,
     TextDelta,
@@ -117,6 +118,7 @@ class FakeAvatar:
 
     started_with: str | None = None
     audio_chunks: list[bytes] = field(default_factory=list)
+    interrupted: int = 0
     paused: int = 0
     stopped: bool = False
 
@@ -125,6 +127,9 @@ class FakeAvatar:
 
     async def push_audio(self, audio: bytes) -> None:
         self.audio_chunks.append(audio)
+
+    async def interrupt(self) -> None:
+        self.interrupted += 1
 
     async def pause(self) -> None:
         self.paused += 1
@@ -144,9 +149,13 @@ class FakeRetrieval:
         self._chunks = list(chunks)
         self.latency_ms = latency_ms
         self.queries: list[str] = []
+        self.principals: list[Principal] = []
+        """Every principal searched with, so a test can assert the core passes
+        the requester through rather than dropping it (§13)."""
 
-    async def search(self, query: str, *, user_id: str, limit: int = 5) -> list[Chunk]:
+    async def search(self, query: str, *, principal: Principal, limit: int = 5) -> list[Chunk]:
         self.queries.append(query)
+        self.principals.append(principal)
         if self.latency_ms:
             await asyncio.sleep(self.latency_ms / 1000.0)
         return self._chunks[:limit]

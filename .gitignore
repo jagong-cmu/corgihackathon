@@ -2,8 +2,11 @@ node_modules/
 dist/
 .DS_Store
 *.log
+# Broad on purpose: .env.bak / .env.save / .env.2 are all real things editors
+# and shell one-liners create, and any of them can carry live credentials.
 .env
-.env.local
+.env.*
+!.env.example
 .gstack/
 
 # Python

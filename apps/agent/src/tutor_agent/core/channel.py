@@ -72,6 +72,27 @@ class ChannelAdapter(Protocol):
 
     async def send_audio(self, audio: bytes) -> None: ...
 
+    async def stop_audio(self) -> None:
+        """Discard audio handed to the transport but not yet heard.
+
+        Barge-in needs this and cancel_turn cannot provide it: cancelling a turn
+        stops *canvas actions*, which the client controls, but audio has already
+        left for the transport's playout buffer. Without this the arrows stop
+        appearing and the tutor keeps talking over the learner — which reads as
+        the barge-in being broken even though the cue logic is fine.
+
+        A no-op on channels that don't stream audio.
+        """
+
+    async def flush_audio(self) -> None:
+        """Emit any buffered tail now that the turn's speech is complete.
+
+        Adapters reframe the PCM stream into fixed frames, which leaves under
+        one frame held back between calls. Across sentences that is correct —
+        speech is continuous. At end of turn it would strand the final few
+        milliseconds, so the core says when the stream is done.
+        """
+
     async def send_action(self, turn_id: str, action: TimedAction) -> None:
         """Emit one canvas_action frame. The adapter serializes to the §4
         envelope; it does not decide what or when to send."""
@@ -94,6 +115,8 @@ class RecordingAdapter:
         self.audio: list[bytes] = []
         self.frames: list[dict[str, Any]] = []
         self.cancellations: list[tuple[str, str]] = []
+        self.audio_stops: int = 0
+        self.audio_flushes: int = 0
         self._caps = self.caps or ChannelCapabilities.realtime()
 
     @property
@@ -106,6 +129,15 @@ class RecordingAdapter:
 
     async def send_audio(self, audio: bytes) -> None:
         self.audio.append(audio)
+
+    async def stop_audio(self) -> None:
+        # Records rather than truncates: `audio` is the assertion surface for
+        # what the core produced, and a test that wants to know when the stop
+        # landed can read the count alongside it.
+        self.audio_stops += 1
+
+    async def flush_audio(self) -> None:
+        self.audio_flushes += 1
 
     async def send_action(self, turn_id: str, action: TimedAction) -> None:
         self.frames.append(
