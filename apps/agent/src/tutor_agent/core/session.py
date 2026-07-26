@@ -155,9 +155,16 @@ class TutorSession:
         """Sync-plane retrieval. Answers 'what does the tutor know' (§7.3)."""
         if self.retrieval is None:
             return None
-        chunks = await self.retrieval.search(
-            query, principal=self.principal, limit=self.config.retrieval_limit
-        )
+        try:
+            chunks = await self.retrieval.search(
+                query, principal=self.principal, limit=self.config.retrieval_limit
+            )
+        except Exception:
+            # Same rule as opening the index: a broken database makes a worse
+            # tutor, not a silent one. Without this, one bad query kills the
+            # turn before a word is spoken — the learner just hears nothing.
+            log.exception("retrieval failed — answering without indexed materials")
+            return None
         if not chunks:
             return None
         rendered = "\n\n".join(f"[{c.chunk_id}] {c.text}" for c in chunks)

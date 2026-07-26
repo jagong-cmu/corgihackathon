@@ -16,6 +16,7 @@ import logging
 import os
 import re
 import time
+import uuid
 
 from livekit import agents, rtc
 from livekit.plugins import elevenlabs as lk_elevenlabs
@@ -48,6 +49,14 @@ BUDGET_MS = 1200
 
 def _round(value: float | None) -> float | None:
     return None if value is None else round(value, 1)
+
+
+def _is_uuid(value: str) -> bool:
+    try:
+        uuid.UUID(value)
+    except ValueError:
+        return False
+    return True
 
 
 class TurnMetricsSink:
@@ -113,8 +122,22 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         track, rtc.TrackPublishOptions(source=rtc.TrackSource.SOURCE_MICROPHONE)
     )
 
+    # Kick off the avatar handshake now and collect it after the rest of the
+    # setup: the vendor round-trip is the longest single step, nothing below
+    # needs its result, and every second saved is a second sooner the face
+    # appears instead of the placeholder.
+    avatar_task = asyncio.create_task(_maybe_start_avatar(ctx, persona))
+
     adapter = LiveKitAdapter(room=ctx.room, audio_source=source)
     pool, retrieval = await _maybe_open_retrieval()
+    user_id = owner or os.environ.get("TUTOR_USER_ID", "dev")
+    if retrieval is not None and not _is_uuid(user_id):
+        # doc_chunks ownership is UUID-keyed, so a session without a real
+        # owner id raises DataError on every single query — which, unguarded,
+        # reads as "the tutor hears you and never answers". There are also no
+        # materials such a session could match, so skip the index entirely.
+        log.info("retrieval off for this session — %r is not an owner uuid", user_id)
+        retrieval = None
     session = TutorSession(
         persona=persona,
         llm=AnthropicLLM(model="claude-sonnet-5", effort="low"),
@@ -127,7 +150,7 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         # reveal_step). Set TUTOR_TOOLSET=canvas for the tldraw client.
         config=SessionConfig(toolset=os.environ.get("TUTOR_TOOLSET", "whiteboard")),
         # Retrieval ACLs follow the learner the room was created for.
-        user_id=owner or os.environ.get("TUTOR_USER_ID", "dev"),
+        user_id=user_id,
     )
     if pool is not None:
         ctx.add_shutdown_callback(pool.close)
@@ -141,7 +164,7 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         server_vad=VAD_OPTIONS,
     )
 
-    avatar = await _maybe_start_avatar(ctx, persona)
+    avatar = await avatar_task
     if avatar is not None and avatar.is_active:
         # The avatar republishes the audio it receives, so publishing to our
         # own track too would play everything twice, slightly offset. Hand
@@ -165,7 +188,21 @@ async def entrypoint(ctx: agents.JobContext) -> None:
     metrics = TurnMetricsSink(os.environ.get("TUTOR_METRICS_PATH"))
 
     async def run_turn(transcript: str) -> None:
-        """One turn. Serialized so a fast follow-up queues instead of racing."""
+        """One turn. Serialized so a fast follow-up queues instead of racing.
+
+        Spawned fire-and-forget, so an exception here evaporates unless caught:
+        the learner hears dead air and the log shows a healthy session. Every
+        failure must be loud — this is the line the retrieval DataError hid
+        behind for a whole afternoon.
+        """
+        nonlocal speech_ended_at
+        try:
+            await _run_turn_locked(transcript)
+        except Exception:
+            log.exception("turn failed for %r — the learner heard silence", transcript[:80])
+            speech_ended_at = None
+
+    async def _run_turn_locked(transcript: str) -> None:
         nonlocal speech_ended_at
         async with turn_lock:
             started = time.perf_counter()
@@ -253,18 +290,9 @@ async def entrypoint(ctx: agents.JobContext) -> None:
     ) -> None:
         _maybe_transcribe(track, participant.identity)
 
-    # The learner usually joins and publishes their microphone while we are
-    # still loading the persona or inside the avatar handshake — seconds during
-    # which track_subscribed fires with no handler attached. Sweep what is
-    # already in the room, or an early microphone never reaches STT and the
-    # tutor spends the whole session deaf.
-    for remote in ctx.room.remote_participants.values():
-        for publication in remote.track_publications.values():
-            if publication.track is not None:
-                _maybe_transcribe(publication.track, remote.identity)
-
     async def _transcribe(track: rtc.Track) -> None:
         """Stream the learner's audio through Scribe v2 and drive turns."""
+        log.info("listening to learner track %s", track.sid)
         stream = stt.stream()
 
         async def pump() -> None:
@@ -276,6 +304,11 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         try:
             async for event in stream:
                 await _on_speech_event(event)
+        except Exception:
+            # Fire-and-forget task: without this, its death is invisible and
+            # the symptom is "the tutor just stopped hearing me" with a clean
+            # log. Loud beats deaf.
+            log.exception("STT stream for track %s died — the tutor can no longer hear it", track.sid)
         finally:
             pump_task.cancel()
             await stream.aclose()
@@ -301,6 +334,22 @@ async def entrypoint(ctx: agents.JobContext) -> None:
             # Not awaited: the STT loop must keep consuming so barge-in during
             # the tutor's reply still registers.
             asyncio.create_task(run_turn(text))
+
+    # The learner usually joins and publishes their microphone while we are
+    # still loading the persona or inside the avatar handshake — seconds during
+    # which track_subscribed fires with no handler attached. Sweep what is
+    # already in the room, or an early microphone never reaches STT and the
+    # tutor spends the whole session deaf. LAST in the entrypoint: the sweep
+    # runs immediately, so everything it reaches (transitively: _transcribe,
+    # _on_speech_event, run_turn) must already be bound — and a failed sweep
+    # must degrade to event-driven subscriptions, never kill the session.
+    try:
+        for remote in ctx.room.remote_participants.values():
+            for publication in remote.track_publications.values():
+                if publication.track is not None:
+                    _maybe_transcribe(publication.track, remote.identity)
+    except Exception:
+        log.exception("initial track sweep failed — relying on live subscriptions only")
 
 
 def main() -> None:
