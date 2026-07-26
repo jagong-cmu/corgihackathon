@@ -9,7 +9,7 @@
  *
  * Also the one place tutor options are fetched (persona API → deployed
  * serverless list → built-ins) and mirrored into the TutorContext roster, so
- * the sidebar, the card, and the session picker all agree on who exists.
+ * the sidebar roster and the tutor card agree on who exists.
  */
 import {
   createContext,
@@ -34,6 +34,9 @@ interface LiveTutorContextValue {
   live: LiveTutorApi;
   /** Startable tutors (personas), freshest source available. */
   options: TutorOption[];
+  /** True once the first options fetch settled (any tier). Until then the
+   * card holds its tongue about who can or can't go live. */
+  optionsLoaded: boolean;
   /** Whether LiveKit is configured on this host; null while checking. */
   configured: boolean | null;
 }
@@ -44,6 +47,7 @@ export function LiveTutorProvider({ children }: { children: ReactNode }) {
   const live = useLiveTutor(publishBoardCue);
   const { personasVersion, syncPersonas } = useTutors();
   const [options, setOptions] = useState<TutorOption[]>(BUILTIN_TUTORS);
+  const [optionsLoaded, setOptionsLoaded] = useState(false);
   const [configured, setConfigured] = useState<boolean | null>(null);
 
   useEffect(() => {
@@ -80,6 +84,7 @@ export function LiveTutorProvider({ children }: { children: ReactNode }) {
       }
       if (cancelled) return;
       setOptions(next);
+      setOptionsLoaded(true);
       syncPersonas(
         next.map((t) => ({ id: t.id, name: t.name, hasVoice: t.hasVoice, photoUrl: t.photoUrl }))
       );
@@ -89,7 +94,9 @@ export function LiveTutorProvider({ children }: { children: ReactNode }) {
     };
   }, [personasVersion, syncPersonas]);
 
-  return <Ctx.Provider value={{ live, options, configured }}>{children}</Ctx.Provider>;
+  return (
+    <Ctx.Provider value={{ live, options, optionsLoaded, configured }}>{children}</Ctx.Provider>
+  );
 }
 
 export function useLiveTutorContext(): LiveTutorContextValue {

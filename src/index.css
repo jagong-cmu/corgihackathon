@@ -716,6 +716,7 @@ body.presenting .materials-fab { display: none !important; }
 .live-end { color: var(--ink-berry); }
 
 .live-picker { display: flex; gap: 8px; width: 100%; max-width: 320px; margin-top: 4px; }
+.live-picker .live-start { flex: 1; }
 .live-select,
 .tutors-input {
   flex: 1; min-width: 0;
@@ -795,14 +796,12 @@ body.presenting .materials-fab { display: none !important; }
 .tutors-hint { font: 400 11px/1.45 var(--sans); color: var(--ink-3); }
 textarea.tutors-input { resize: vertical; font-family: var(--sans); }
 
-/* Manage link under the live stage (post-merge: shares the column with the
-   sidebar tutor card, so it stays quiet). */
-.live-manage {
-  background: none; border: none; cursor: pointer; padding: 4px;
-  font: 600 12px var(--sans); color: var(--corgi-ink);
-  text-decoration: underline; text-underline-offset: 3px;
+/* Quiet hint under the Start button when the active tutor can't go live.
+   Mirrors .live-warn's text treatment (the card centers its children). */
+.live-hint {
+  font: 500 12.5px/1.5 var(--sans); color: var(--ink-2);
+  max-width: 300px; text-align: center;
 }
-.live-manage:hover { color: var(--corgi-deep); }
 
 /* ---- Live session inside the tutor card (one tutor presence, no dock) ---- */
 /* The tutor's photo holding the video's spot during the handshake. */
