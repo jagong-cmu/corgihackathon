@@ -10,6 +10,7 @@
  */
 import type { TurnResult, VisualSpec } from "../src/spec/visualSpec";
 import { validateVisualSpec } from "../src/spec/validate";
+import { matchDemoTurn } from "../src/spec/demoScenes";
 import { callLLM, mockTurn, type TurnRequest } from "./llm";
 
 function equationFallback(spokenText: string, note: string): TurnResult {
@@ -28,6 +29,12 @@ function equationFallback(spokenText: string, note: string): TurnResult {
 }
 
 export async function runTurn(req: TurnRequest): Promise<TurnResult> {
+  // Demo questions get a hand-authored, deterministic answer + ~10s animation
+  // so they never depend on model variance (and the model wouldn't know what
+  // "Corgi" is anyway). See src/spec/demoScenes.ts.
+  const demo = matchDemoTurn(req.userQuery);
+  if (demo) return demo;
+
   let lastError = "";
   let spokenText = "";
 

@@ -11,10 +11,16 @@ import {
   animatedDiagramNewtonExample,
   animatedDiagramExample2,
 } from "./spec/animatedDiagram";
+import { matchDemoTurn } from "./spec/demoScenes";
 
 const OFFLINE = "(Offline demo — this static build has no live AI; ask on the connected version for any topic.)";
 
 export function clientMockTurn(userQuery: string): TurnResponse {
+  // Demo questions ("what is Corgi", "risk retention group") get the exact same
+  // hand-authored scene the connected backend serves. See spec/demoScenes.ts.
+  const demo = matchDemoTurn(userQuery);
+  if (demo) return { ...demo, llm: false };
+
   const q = userQuery.toLowerCase();
   const wantsPlot =
     /\b(graph|plot|function|derivative|tangent|parabola|curve|x\^?2|sin|cos)\b/.test(q);
