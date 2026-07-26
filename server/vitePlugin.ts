@@ -13,8 +13,8 @@
  */
 import type { Plugin, Connect } from "vite";
 import { runTurn } from "./turn";
-import { createLiveSession, liveKitConfigured } from "./live";
-import { liveTutorLibrary } from "./tutorLibrary";
+import { createLiveSession, liveKitConfigured } from "../api/_lib/live";
+import { liveTutorLibrary } from "../api/_lib/tutorLibrary";
 import { llmAvailable } from "./llm";
 import { checkContentBodyAvailable, mergeSyncIngest, mergeConfigured } from "./merge";
 import { ingestDocument, listMaterials, corpusSize, provider, retrieve } from "./rag";

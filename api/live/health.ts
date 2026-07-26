@@ -1,5 +1,5 @@
 /** Vercel serverless function: GET /api/live/health — is LiveKit set up here? */
-import { liveKitConfigured } from "../../server/live";
+import { liveKitConfigured } from "../_lib/live.js";
 
 interface FnRes {
   status(code: number): FnRes;

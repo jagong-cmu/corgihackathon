@@ -3,7 +3,7 @@
  * picker on deployments where the persona API isn't reachable. See
  * server/tutorLibrary.ts for the list and the TUTOR_LIBRARY override.
  */
-import { liveTutorLibrary } from "../../server/tutorLibrary";
+import { liveTutorLibrary } from "../_lib/tutorLibrary.js";
 
 interface FnRes {
   status(code: number): FnRes;

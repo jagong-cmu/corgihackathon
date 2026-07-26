@@ -8,7 +8,7 @@
  * Requires LIVEKIT_URL / LIVEKIT_API_KEY / LIVEKIT_API_SECRET in the Vercel
  * project's environment variables.
  */
-import { createLiveSession, liveKitConfigured } from "../../server/live";
+import { createLiveSession, liveKitConfigured } from "../_lib/live.js";
 
 interface FnReq {
   method?: string;
