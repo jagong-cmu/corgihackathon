@@ -23,6 +23,8 @@ import { Avatar } from "./Avatar";
 import { useTutors } from "../tutors/TutorContext";
 import type { RevealApi } from "../voice/voiceInterface";
 import { askTutor, type TurnResponse } from "../api";
+import { LiveTutorStage } from "../live/LiveTutorStage";
+import { TutorsPanel } from "./TutorsPanel";
 import "./shell.css";
 
 export function TutorShell() {
@@ -39,6 +41,12 @@ export function TutorShell() {
   // Presenter mode: board fills the screen, the tutor becomes a face-cam bubble.
   const [presenting, setPresenting] = useState(false);
   const shellRef = useRef<HTMLDivElement>(null);
+
+  // Voice-tutor manager (backend personas — the tutors that can actually
+  // speak). Distinct from the sidebar roster, which styles the on-canvas
+  // tutor; the two will converge once created tutors get cloned voices.
+  const [voiceTutorsOpen, setVoiceTutorsOpen] = useState(false);
+  const [voiceTutorsVersion, setVoiceTutorsVersion] = useState(0);
 
   const greeting = `Hi, I'm ${activeTutor.name}. Ask me anything — I'll explain it on the board while I talk.`;
   const activeSpokenText = live ? live.spokenText : greeting;
@@ -207,6 +215,17 @@ export function TutorShell() {
               </p>
             </div>
           </div>
+
+          {/* Live voice session (LiveKit): talk to the agent-backed tutor.
+              Independent of the ask-driven board above — no animation sync. */}
+          <div className="tutor-stage">
+            <div className="tutor-portrait">
+              <LiveTutorStage
+                refresh={voiceTutorsVersion}
+                onManage={() => setVoiceTutorsOpen(true)}
+              />
+            </div>
+          </div>
           <div className="flex-spacer" aria-hidden />
         </section>
 
@@ -261,6 +280,12 @@ export function TutorShell() {
           <Avatar tutor={activeTutor} size={168} pose="idle" expression="happy" />
         </div>
       </aside>
+
+      <TutorsPanel
+        open={voiceTutorsOpen}
+        onClose={() => setVoiceTutorsOpen(false)}
+        onChanged={() => setVoiceTutorsVersion((v) => v + 1)}
+      />
     </div>
   );
 }
