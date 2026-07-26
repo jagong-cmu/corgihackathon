@@ -48,7 +48,7 @@ CHOOSING A PRIMITIVE:
     drawSequence: [ { "id":"eq", "element":"equation", "durationMs": 600 } ]
 - A concept that has a natural PICTURE — physics, forces/motion, a process, cause→effect, parts of a system, a labeled model (e.g. "Newton's 2nd law", "how a lever works", "the water cycle", "supply and demand"):
     PREFER primitive "animated_diagram" (see its section below) — an animated, labeled illustration beats a mascot reading bullet points.
-- A purely abstract / analogy / definitional "explain what X is" question with NO natural diagram:
+- A purely abstract / analogy / definitional question with NO possible picture (rare — most topics DO have a picture, so prefer animated_diagram):
     track "freeform", primitive "freeform_scene".
     content: {
       "mascot": "guide",
@@ -60,12 +60,13 @@ ${ANIMATED_DIAGRAM_PROMPT}
 
 TIMING & SYNC:
 - drawSequence lists reveal steps in order; durationMs is how long that element draws on.
-- syncCues fire each step. Give each step an atMs roughly matching when the narration reaches it (start at 0, then stagger, e.g. 0, 500, 2100, 3100 for a plot; 0, 1600, 3200 for beats). Keep the whole sequence under ~6000ms.
+- syncCues fire each step. Give each step an atMs roughly matching when the narration reaches it (start at 0, then stagger).
+- MAKE EXPLANATORY VISUALS SUBSTANTIAL: for "animated_diagram" and "freeform_scene", pace the reveals so the LAST step's atMs is about 8500-9500ms — reveal one element roughly every 1200-1600ms so the whole animation runs ~10 seconds and builds like a story (this usually means 6-8 elements). Deterministic math ("function_plot", "vector_diagram", "number_line") and a single "equation" can stay short (~3000-4000ms).
 - syncCues stepId must match a drawSequence id.
 
 RULES:
 - Keep spokenText and the captions consistent — the captions summarize what the voice is saying.
-- Use ONLY the primitives above. If unsure, prefer "equation" with a clear formula or a short "freeform_scene".
+- Use ONLY the primitives above. EVERY answer must come with a real visual: when a question isn't math, DEFAULT to an "animated_diagram" of 6-8 labeled/icon elements that actually show the idea. Use "freeform_scene" only for a truly abstract question with no possible picture, and a bare "equation" only when the answer genuinely is just a formula.
 - Output strictly valid JSON. Escape backslashes in TeX (\\\\frac, \\\\sqrt).`;
 
 export function buildUserPrompt(userQuery: string, retrievedContext?: string[]): string {
