@@ -22,9 +22,11 @@ import {
 interface Props {
   /** Bump to re-fetch tutor options (e.g. after creating one in the panel). */
   refresh?: number;
+  /** Open the voice-tutor manager (create/voice/avatar), when the host has one. */
+  onManage?: () => void;
 }
 
-export function LiveTutorStage({ refresh = 0 }: Props) {
+export function LiveTutorStage({ refresh = 0, onManage }: Props) {
   const { state, start, end, toggleMic } = useLiveTutor();
   const [options, setOptions] = useState<TutorOption[]>(BUILTIN_TUTORS);
   const [selected, setSelected] = useState<string>(BUILTIN_TUTORS[0].id);
@@ -184,6 +186,12 @@ export function LiveTutorStage({ refresh = 0 }: Props) {
         </div>
       )}
       {state.error && <div className="live-warn">⚠ {state.error}</div>}
+
+      {onManage && (
+        <button type="button" className="live-manage" onClick={onManage}>
+          Create &amp; manage voice tutors
+        </button>
+      )}
     </div>
   );
 }

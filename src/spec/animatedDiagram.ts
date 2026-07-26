@@ -40,13 +40,14 @@ export type DiagramColor = "blue" | "berry" | "sage" | "amber" | "ink";
  */
 export interface DiagramElement {
   id: string; // MUST equal its drawSequence step id
-  kind: "ball" | "box" | "arrow" | "line" | "label" | "dot";
+  kind: "icon" | "ball" | "box" | "arrow" | "line" | "label" | "dot";
   at?: [number, number]; // center for ball/box/dot; anchor for label; y is DOWN
   from?: [number, number]; // arrow/line start
   to?: [number, number]; // arrow/line end
   r?: number;
   w?: number;
   h?: number;
+  size?: number; // font size for an `icon` emoji (~10-16) or a `label` (~5-8)
   text?: string;
   color?: DiagramColor;
   moveTo?: [number, number]; // element eases from `at` -> `moveTo` as its step progresses
@@ -66,13 +67,14 @@ const diagramColor = z.enum(["blue", "berry", "sage", "amber", "ink"]);
 
 const diagramElementSchema = z.object({
   id: z.string().min(1),
-  kind: z.enum(["ball", "box", "arrow", "line", "label", "dot"]),
+  kind: z.enum(["icon", "ball", "box", "arrow", "line", "label", "dot"]),
   at: point2.optional(),
   from: point2.optional(),
   to: point2.optional(),
   r: z.number().optional(),
   w: z.number().optional(),
   h: z.number().optional(),
+  size: z.number().positive().optional(),
   text: z.string().optional(),
   color: diagramColor.optional(),
   moveTo: point2.optional(),
@@ -103,59 +105,60 @@ export const animatedDiagramNewtonExample: VisualSpec = {
     viewBox: [100, 60],
     elements: [
       {
-        id: "force-arrow",
+        id: "equation",
+        kind: "label",
+        at: [50, 9],
+        text: "F = m · a",
+        size: 7,
+        color: "ink",
+      },
+      {
+        id: "player",
+        kind: "icon",
+        at: [12, 41],
+        text: "🧑",
+        size: 15,
+      },
+      {
+        id: "push",
         kind: "arrow",
-        from: [6, 38],
-        to: [15, 38],
-        text: "F",
+        from: [20, 41],
+        to: [32, 41],
+        text: "your push (F)",
         color: "berry",
       },
       {
         id: "ball",
-        kind: "ball",
-        at: [22, 38],
-        r: 7,
-        moveTo: [72, 38],
-        color: "amber",
+        kind: "icon",
+        at: [38, 41],
+        text: "🏀",
+        size: 13,
+        moveTo: [82, 41],
       },
       {
-        id: "accel-arrow",
+        id: "accel",
         kind: "arrow",
-        from: [80, 38],
-        to: [94, 38],
+        from: [86, 41],
+        to: [96, 41],
         text: "a",
         color: "blue",
       },
-      {
-        id: "mass-label",
-        kind: "label",
-        at: [22, 52],
-        text: "m",
-        color: "ink",
-      },
-      {
-        id: "equation",
-        kind: "label",
-        at: [50, 10],
-        text: "F = m · a",
-        color: "ink",
-      },
     ],
-    caption: "Force on a mass produces acceleration: F = m · a.",
+    caption: "A harder push (F) gives the basketball more acceleration (a).",
   } satisfies AnimatedDiagramContent,
   drawSequence: [
-    { id: "force-arrow", element: "force-arrow", durationMs: 600 },
-    { id: "ball", element: "ball", durationMs: 1100 },
-    { id: "accel-arrow", element: "accel-arrow", durationMs: 600 },
-    { id: "mass-label", element: "mass-label", durationMs: 500 },
-    { id: "equation", element: "equation", durationMs: 700 },
+    { id: "equation", element: "equation", durationMs: 600 },
+    { id: "player", element: "player", durationMs: 500 },
+    { id: "push", element: "push", durationMs: 600 },
+    { id: "ball", element: "ball", durationMs: 1500 },
+    { id: "accel", element: "accel", durationMs: 600 },
   ],
   syncCues: [
-    { stepId: "force-arrow", atMs: 0 },
-    { stepId: "ball", atMs: 700 },
-    { stepId: "accel-arrow", atMs: 2000 },
-    { stepId: "mass-label", atMs: 2800 },
-    { stepId: "equation", atMs: 3600 },
+    { stepId: "equation", atMs: 0 },
+    { stepId: "player", atMs: 600 },
+    { stepId: "push", atMs: 1200 },
+    { stepId: "ball", atMs: 2000 },
+    { stepId: "accel", atMs: 3500 },
   ],
 } as VisualSpec;
 
@@ -238,14 +241,22 @@ export const animatedDiagramExample2: VisualSpec = {
  * Authoring block for the LLM (same bullet style as server/prompt.ts).
  * ------------------------------------------------------------------------- */
 
-export const ANIMATED_DIAGRAM_PROMPT: string = `- A concept, physics, or process explanation that benefits from a labeled, MOVING illustration rather than a mascot + text (e.g. "explain Newton's second law", "show supply and demand", "how does the water cycle work", "explain a pulley"):
+export const ANIMATED_DIAGRAM_PROMPT: string = `- A concept, physics, or process that is best TAUGHT with a labeled, MOVING illustration (e.g. "explain Newton's second law", "explain acceleration in basketball terms", "how does a lever work", "show supply and demand", "the water cycle"):
     track "freeform", primitive "animated_diagram".
     content: {
-      "viewBox"?: [width, height] (default [100, 60]; y grows DOWNWARD like SVG),
-      "elements": [ { "id": string, "kind": "ball"|"box"|"arrow"|"line"|"label"|"dot", "at"?: [x,y] (center for ball/box/dot, anchor for label), "from"?: [x,y], "to"?: [x,y] (arrow/line endpoints), "r"?: number, "w"?: number, "h"?: number, "text"?: string, "color"?: "blue"|"berry"|"sage"|"amber"|"ink", "moveTo"?: [x,y] } ],
+      "viewBox"?: [width, height] (default [100, 60]; drawing area is x: 0..width, y: 0..height, y grows DOWNWARD),
+      "elements": [ { "id": string, "kind": "icon"|"ball"|"box"|"arrow"|"line"|"label"|"dot", "at"?: [x,y], "from"?: [x,y], "to"?: [x,y], "text"?: string, "size"?: number, "r"?: number, "w"?: number, "h"?: number, "color"?: "blue"|"berry"|"sage"|"amber"|"ink", "moveTo"?: [x,y] } ],
       "caption"?: string
     }
-    Setting "moveTo" makes an element EASE from "at" to "moveTo" as its reveal step plays — use it to show motion (a ball accelerating, water rising).
-    Keep the scene to ~4-7 elements laid out in the [100,60] (y-down) space so it stays legible.
-    drawSequence lists one step per element in reveal order; each step's "element" MUST equal that element's "id" (and the step "id" matches too).
-    Example content: {"viewBox":[100,60],"elements":[{"id":"force","kind":"arrow","from":[6,38],"to":[15,38],"text":"F","color":"berry"},{"id":"ball","kind":"ball","at":[22,38],"r":7,"moveTo":[72,38],"color":"amber"},{"id":"eq","kind":"label","at":[50,10],"text":"F = m · a","color":"ink"}]}`;
+  ELEMENT KINDS:
+    - "icon" — ONE emoji drawn at "at" (set "size" ~10-16). THIS is how you make the scene look like the topic. Use a real-object emoji: 🏀 basketball, ⚽ ball, 🏀🧑 player, 🚗 car, 🚀 rocket, 🪝/⚙️ machine, 💧 water, ☀️ sun, ☁️ cloud, 🦲 magnet, 💡 idea, 📈 graph, 🎯 target. Give an icon a "moveTo" to make it travel/accelerate.
+    - "label" — short text at "at" ("size" ~5-8, default 5.5). "arrow"/"line" — from→to, grows on; put a short "text" on it to name the force/flow. "ball" — plain filled circle (only when a generic dot is truly best). "box" — outlined rectangle ("w","h"). "dot" — small marker ("r").
+  MOTION: any element with "at" may add "moveTo" — it EASES from "at" to "moveTo" as its step plays. This is the whole point: use it to SHOW the idea happening (the ball accelerates across, the price slides to where the lines cross, water rises).
+  MATCH THE STUDENT'S FRAMING — non-negotiable: if they ask for it "in basketball terms", the scene MUST be basketball — a 🏀 a 🧑 pushes/shoots, labels in that language ("your push", "the shot", "the hoop"). NEVER answer a themed request with a generic gray ball. Pick icons and words from the exact context they gave.
+  LAYOUT (this is why past scenes looked bad — follow it):
+    - 4-7 elements, spread out; never place two things on the same spot or let labels overlap shapes.
+    - Show the formula/key relation ONCE, as a "label" near the top center (around [width/2, 9]).
+    - The "caption" auto-renders as one line along the BOTTOM: write ONE short plain-language caption, keep the bottom ~10 units clear of your own elements, and do NOT repeat the formula in it.
+    - Keep every coordinate a few units inside the viewBox.
+  drawSequence: one step per element, ordered so the scene builds like a story (set the stage → apply the cause → show the motion/result). Each step's "id" and "element" equal the element's "id".
+  Example (Newton "in basketball terms"): {"viewBox":[100,60],"elements":[{"id":"eq","kind":"label","at":[50,9],"text":"F = m · a","size":7,"color":"ink"},{"id":"player","kind":"icon","at":[12,41],"text":"🧑","size":15},{"id":"push","kind":"arrow","from":[20,41],"to":[32,41],"text":"your push (F)","color":"berry"},{"id":"ball","kind":"icon","at":[38,41],"text":"🏀","size":13,"moveTo":[82,41]},{"id":"accel","kind":"arrow","from":[86,41],"to":[96,41],"text":"a","color":"blue"}],"caption":"A harder push (F) gives the basketball more acceleration (a)."}`;

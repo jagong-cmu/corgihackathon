@@ -86,7 +86,7 @@ export function AnimatedDiagram({ content, state }: Props) {
               const ux = dx / len;
               const uy = dy / len;
               // Arrowhead: small triangle at the current drawn tip.
-              const head = 3;
+              const head = 3.6;
               const back: Pt = [tip[0] - ux * head, tip[1] - uy * head];
               const nx = -uy;
               const ny = ux;
@@ -112,12 +112,14 @@ export function AnimatedDiagram({ content, state }: Props) {
                   {el.text && (
                     <text
                       x={mid[0]}
-                      y={mid[1] - 1.5}
-                      fontSize={4}
+                      y={mid[1] - 1.8}
+                      fontSize={4.4}
                       fontFamily="system-ui, sans-serif"
+                      fontWeight={600}
                       fill={color}
                       textAnchor="middle"
                       opacity={e}
+                      style={{ paintOrder: "stroke", stroke: "#fefdfa", strokeWidth: 1, strokeLinejoin: "round" }}
                     >
                       {el.text}
                     </text>
@@ -211,6 +213,30 @@ export function AnimatedDiagram({ content, state }: Props) {
               );
             }
 
+            case "icon": {
+              // A single emoji (🏀, 🧑, 🚗, 💧…) — the fastest way to make the
+              // scene RECOGNIZABLE and on-topic. Pops + fades in, then keeps any
+              // moveTo motion so it can visibly accelerate/travel.
+              const at = el.at ?? [0, 0];
+              const pos = el.moveTo ? lerpPt(at, el.moveTo, e) : at;
+              const size = el.size ?? 12;
+              const intro = ease(clamp01(p / (el.moveTo ? 0.22 : 0.35)));
+              const fs = size * lerp(0.55, 1, intro);
+              return (
+                <text
+                  key={el.id}
+                  x={pos[0]}
+                  y={pos[1]}
+                  fontSize={fs}
+                  textAnchor="middle"
+                  dominantBaseline="central"
+                  opacity={el.moveTo ? 1 : intro}
+                >
+                  {el.text ?? "●"}
+                </text>
+              );
+            }
+
             case "label": {
               const at = el.at ?? [0, 0];
               const pos = el.moveTo ? lerpPt(at, el.moveTo, e) : at;
@@ -219,11 +245,14 @@ export function AnimatedDiagram({ content, state }: Props) {
                   key={el.id}
                   x={pos[0]}
                   y={pos[1]}
-                  fontSize={5}
+                  fontSize={el.size ?? 5.5}
                   fontFamily="system-ui, sans-serif"
+                  fontWeight={600}
                   fill={color}
                   textAnchor="middle"
+                  dominantBaseline="central"
                   opacity={e}
+                  style={{ paintOrder: "stroke", stroke: "#fefdfa", strokeWidth: 1, strokeLinejoin: "round" }}
                 >
                   {el.text ?? ""}
                 </text>
@@ -242,9 +271,11 @@ export function AnimatedDiagram({ content, state }: Props) {
             y={H - 3}
             fontSize={5}
             fontFamily="system-ui, sans-serif"
+            fontWeight={600}
             fill={COLORS.ink}
             textAnchor="middle"
-            opacity={0.85}
+            opacity={0.92}
+            style={{ paintOrder: "stroke", stroke: "#fefdfa", strokeWidth: 1.4, strokeLinejoin: "round" }}
           >
             {content.caption}
           </text>

@@ -794,3 +794,12 @@ body.presenting .materials-fab { display: none !important; }
 .tutors-exchange { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 5px 0; }
 .tutors-hint { font: 400 11px/1.45 var(--sans); color: var(--ink-3); }
 textarea.tutors-input { resize: vertical; font-family: var(--sans); }
+
+/* Manage link under the live stage (post-merge: shares the column with the
+   sidebar tutor card, so it stays quiet). */
+.live-manage {
+  background: none; border: none; cursor: pointer; padding: 4px;
+  font: 600 12px var(--sans); color: var(--corgi-ink);
+  text-decoration: underline; text-underline-offset: 3px;
+}
+.live-manage:hover { color: var(--corgi-deep); }

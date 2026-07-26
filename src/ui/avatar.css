@@ -1,0 +1,9 @@
+/* Custom-tutor photo avatar — circular, warm ring, subtle depth. */
+.avatar-photo {
+  border-radius: 50%;
+  object-fit: cover;
+  border: 3px solid #fefdfa;
+  box-shadow: 0 6px 18px rgba(60, 40, 15, .22), inset 0 2px 6px rgba(255, 255, 255, .5);
+  background: #f6efe1;
+  display: block;
+}
