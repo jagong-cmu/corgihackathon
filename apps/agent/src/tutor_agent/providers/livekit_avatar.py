@@ -37,6 +37,7 @@ offset. See `_maybe_start_avatar` in adapters/worker.py.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from abc import ABC, abstractmethod
@@ -62,6 +63,16 @@ AVATAR_SAMPLE_RATE = 16_000
 # avatar_ref values of this shape point at a photo in the API's blob store
 # (apps/api .../blobs.py writes them). Kept in sync by test_realtime_adapter.
 BLOB_REF_PREFIX = "blob:"
+
+# How long one audio write may block before the avatar is declared dead. The
+# FIRST write legitimately blocks while DataStreamAudioOutput waits for the
+# avatar participant to join and publish video — many seconds on a normal
+# handshake — so it gets a generous ceiling. Every later write is bytes into an
+# already-open stream; anything slower than a beat means the peer is gone, and
+# without the ceiling capture_frame blocks forever while holding the worker's
+# turn lock — the tutor goes permanently mute with a healthy-looking log.
+FIRST_PUSH_TIMEOUT_S = 30.0
+PUSH_TIMEOUT_S = 5.0
 
 
 def load_blob_image(ref: str, *, dsn: str | None) -> Image.Image | None:
@@ -118,6 +129,7 @@ class LiveKitAvatar(ABC):
         self.credentials = credentials
         self._output: DataStreamAudioOutput | None = None
         self._active = False
+        self._pushed_once = False
         # Same reframing the publish path needs, at the avatar's ingest rate.
         # A chunk ending mid-sample would be rejected by rtc.AudioFrame.
         self._splitter = PcmStreamSplitter(sample_rate=AVATAR_SAMPLE_RATE, num_channels=1)
@@ -131,6 +143,16 @@ class LiveKitAvatar(ABC):
         to silence.
         """
         return self._active
+
+    @property
+    def started_streaming(self) -> bool:
+        """True once at least one audio frame reached the avatar.
+
+        Distinguishes "its participant hasn't joined YET" (a normal handshake
+        window, sometimes many seconds) from "its participant is GONE" — the
+        health checks may only treat absence as death after this flips.
+        """
+        return self._pushed_once
 
     def _mint_token(self) -> str:
         creds = self.credentials
@@ -175,21 +197,64 @@ class LiveKitAvatar(ABC):
     async def push_audio(self, audio: bytes) -> None:
         if self._output is None or not audio:
             return
-        for block in self._splitter.feed(audio):
+        timeout = PUSH_TIMEOUT_S if self._pushed_once else FIRST_PUSH_TIMEOUT_S
+        try:
+            for block in self._splitter.feed(audio):
+                await asyncio.wait_for(
+                    self._output.capture_frame(
+                        rtc.AudioFrame(
+                            data=block,
+                            sample_rate=AVATAR_SAMPLE_RATE,
+                            num_channels=1,
+                            samples_per_channel=self._splitter.samples_per_frame,
+                        )
+                    ),
+                    timeout=timeout,
+                )
+                self._pushed_once = True
+                timeout = PUSH_TIMEOUT_S
+        except (asyncio.TimeoutError, TimeoutError):
+            log.error(
+                "%s avatar did not accept audio within %.0fs — treating it as dead. "
+                "The worker falls back to its own voice track on the next turn.",
+                self.identity,
+                timeout,
+            )
+            self._active = False
+            self._output = None
+
+    async def flush(self) -> None:
+        """Mark the end of one speech segment (one turn's audio).
+
+        DataStreamAudioOutput rides ONE byte stream per segment and only opens
+        a new stream after flush() closes the current one. The avatar-side
+        receiver abandons the current stream on clear_buffer and then waits for
+        the NEXT stream — so a session that never flushes loses every frame
+        pushed after its first barge-in: the face keeps idling while the tutor
+        "speaks" into a stream nobody reads.
+        """
+        if self._output is None:
+            return
+        tail = self._splitter.flush()
+        if tail:
             await self._output.capture_frame(
                 rtc.AudioFrame(
-                    data=block,
+                    data=tail,
                     sample_rate=AVATAR_SAMPLE_RATE,
                     num_channels=1,
-                    samples_per_channel=self._splitter.samples_per_frame,
+                    samples_per_channel=len(tail) // 2,
                 )
             )
+        self._output.flush()
 
     async def interrupt(self) -> None:
         """Barge-in: drop queued audio so the face stops mid-sentence."""
         self._splitter.reset()
         if self._output is not None:
             self._output.clear_buffer()
+            # The receiver abandons the stream clear_buffer names — close our
+            # side too, so the next segment opens a fresh stream it will read.
+            self._output.flush()
 
     async def pause(self) -> None:
         """Stand down while the learner works solo on the board.
@@ -204,6 +269,7 @@ class LiveKitAvatar(ABC):
         self._splitter.reset()
         if self._output is not None:
             self._output.clear_buffer()
+            self._output.flush()
 
     async def stop(self) -> None:
         if self._output is not None:

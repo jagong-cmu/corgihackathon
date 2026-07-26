@@ -35,6 +35,10 @@ def make_tts(persona: PersonaSpec, *, sample_rate: int = 48_000) -> TTSProvider:
         return ElevenLabsTTS(
             api_key=_require("ELEVENLABS_API_KEY", provider),
             output_format=f"pcm_{sample_rate}",
+            voice_settings={
+                "stability": persona.voice.stability,
+                "similarity_boost": persona.voice.similarity_boost,
+            },
         )
 
     if provider == "cartesia":

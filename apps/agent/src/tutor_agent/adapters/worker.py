@@ -140,7 +140,11 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         retrieval = None
     session = TutorSession(
         persona=persona,
-        llm=AnthropicLLM(model="claude-sonnet-5", effort="low"),
+        # The whiteboard prompt mandates one reveal_step per narration beat and
+        # every tool call costs a round, so present_visual + a 4-7 step diagram
+        # needs 6-9 rounds. The old default of 4 cut every real lesson off
+        # mid-explanation with steps never revealed.
+        llm=AnthropicLLM(model="claude-sonnet-5", effort="low", max_tool_rounds=12),
         # The persona's voice.provider picks the vendor. PCM at LiveKit's
         # native rate — mp3 into an AudioSource is noise.
         tts=make_tts(persona, sample_rate=SAMPLE_RATE),
@@ -164,28 +168,43 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         server_vad=VAD_OPTIONS,
     )
 
-    avatar = await avatar_task
-    if avatar is not None and avatar.is_active:
-        # The avatar republishes the audio it receives, so publishing to our
-        # own track too would play everything twice, slightly offset. Hand
-        # audio to the avatar only, and re-request TTS at its ingest rate.
-        adapter.audio_source = None
-        # Our own track will never carry a frame again — unpublish it so the
-        # client sees exactly one audio track (the avatar's, lip-synced to its
-        # video) instead of a silent twin it might pair with the face.
-        await ctx.room.local_participant.unpublish_track(voice_publication.sid)
-        session.avatar = avatar
-        # Avatars ingest at 16k, so re-build the provider at that rate.
-        session.tts = make_tts(persona, sample_rate=AVATAR_SAMPLE_RATE)
-        log.info(
-            "avatar active (%s) — audio routed through it at %dHz",
-            persona.avatar.provider,
-            AVATAR_SAMPLE_RATE,
-        )
+    # The avatar is collected AFTER the STT/turn wiring below (see the end of
+    # this function): its handshake is multi-second, and a mic that only goes
+    # hot once it finishes loses whatever the learner said during it — which is
+    # usually the actual first question.
+    avatar: LiveKitAvatar | None = None
 
     turn_lock = asyncio.Lock()
     speech_ended_at: float | None = None
     metrics = TurnMetricsSink(os.environ.get("TUTOR_METRICS_PATH"))
+
+    async def _demote_avatar(reason: str) -> None:
+        """The avatar can no longer speak for us — put our own voice back.
+
+        The activation swap below unpublishes the tutor-voice track and nulls
+        adapter.audio_source, making the avatar the ONLY audio path. Without
+        this fallback its death leaves every later turn "succeeding" into a
+        stream nobody reads: the learner hears nothing and the log looks
+        healthy. Callers must hold turn_lock so routing never changes mid-turn.
+        """
+        nonlocal avatar
+        dead, avatar = avatar, None
+        if dead is None:
+            return
+        log.warning("avatar lost (%s) — falling back to the direct voice track", reason)
+        session.avatar = None
+        session.tts = make_tts(persona, sample_rate=SAMPLE_RATE)
+        try:
+            await dead.stop()
+        except Exception:
+            log.exception("avatar cleanup failed during fallback — continuing")
+        voice_source = rtc.AudioSource(SAMPLE_RATE, NUM_CHANNELS)
+        voice_track = rtc.LocalAudioTrack.create_audio_track("tutor-voice", voice_source)
+        await ctx.room.local_participant.publish_track(
+            voice_track, rtc.TrackPublishOptions(source=rtc.TrackSource.SOURCE_MICROPHONE)
+        )
+        adapter.audio_source = voice_source
+        adapter.audio_rerouted = False
 
     async def run_turn(transcript: str) -> None:
         """One turn. Serialized so a fast follow-up queues instead of racing.
@@ -205,6 +224,18 @@ async def entrypoint(ctx: agents.JobContext) -> None:
     async def _run_turn_locked(transcript: str) -> None:
         nonlocal speech_ended_at
         async with turn_lock:
+            # Avatar health gate. started_streaming guards the startup window:
+            # a freshly-handshaken avatar's participant takes seconds to join,
+            # and that is not death.
+            if avatar is not None and not avatar.is_active:
+                await _demote_avatar("it stopped accepting audio")
+            elif (
+                avatar is not None
+                and avatar.started_streaming
+                and avatar.identity not in ctx.room.remote_participants
+            ):
+                await _demote_avatar("its participant left the room")
+
             started = time.perf_counter()
             # STT finalization is dead time the learner hears as silence, and
             # TurnResult can't see it — measure it here or not at all.
@@ -290,6 +321,17 @@ async def entrypoint(ctx: agents.JobContext) -> None:
     ) -> None:
         _maybe_transcribe(track, participant.identity)
 
+    async def _demote_on_disconnect() -> None:
+        async with turn_lock:
+            await _demote_avatar("its participant disconnected")
+
+    @ctx.room.on("participant_disconnected")
+    def _on_participant_gone(participant: rtc.RemoteParticipant) -> None:
+        # LemonSlice ends its side on idle timeout or vendor error; the leave
+        # is the one reliable signal we get, so it triggers the voice fallback.
+        if avatar is not None and participant.identity == avatar.identity:
+            asyncio.create_task(_demote_on_disconnect())
+
     async def _transcribe(track: rtc.Track) -> None:
         """Stream the learner's audio through Scribe v2 and drive turns."""
         log.info("listening to learner track %s", track.sid)
@@ -339,7 +381,7 @@ async def entrypoint(ctx: agents.JobContext) -> None:
     # still loading the persona or inside the avatar handshake — seconds during
     # which track_subscribed fires with no handler attached. Sweep what is
     # already in the room, or an early microphone never reaches STT and the
-    # tutor spends the whole session deaf. LAST in the entrypoint: the sweep
+    # tutor spends the whole session deaf. AFTER all the wiring: the sweep
     # runs immediately, so everything it reaches (transitively: _transcribe,
     # _on_speech_event, run_turn) must already be bound — and a failed sweep
     # must degrade to event-driven subscriptions, never kill the session.
@@ -350,6 +392,38 @@ async def entrypoint(ctx: agents.JobContext) -> None:
                     _maybe_transcribe(publication.track, remote.identity)
     except Exception:
         log.exception("initial track sweep failed — relying on live subscriptions only")
+
+    # Collect the avatar handshake LAST: the mic above is already hot, so a
+    # question asked during these seconds is transcribed and answered (voice
+    # rides our own track until the swap). The swap holds turn_lock so audio
+    # routing never changes underneath a turn in flight.
+    try:
+        started_avatar = await avatar_task
+    except Exception:
+        log.exception("avatar startup failed — continuing voice-only")
+        started_avatar = None
+    if started_avatar is not None and started_avatar.is_active:
+        async with turn_lock:
+            avatar = started_avatar
+            # The avatar republishes the audio it receives, so publishing to
+            # our own track too would play everything twice, slightly offset.
+            # Hand audio to the avatar only, and re-request TTS at its ingest
+            # rate.
+            adapter.audio_source = None
+            adapter.audio_rerouted = True
+            # Our own track will never carry a frame again — unpublish it so
+            # the client sees exactly one audio track (the avatar's, lip-synced
+            # to its video) instead of a silent twin it might pair with the
+            # face.
+            await ctx.room.local_participant.unpublish_track(voice_publication.sid)
+            session.avatar = avatar
+            # Avatars ingest at 16k, so re-build the provider at that rate.
+            session.tts = make_tts(persona, sample_rate=AVATAR_SAMPLE_RATE)
+        log.info(
+            "avatar active (%s) — audio routed through it at %dHz",
+            persona.avatar.provider,
+            AVATAR_SAMPLE_RATE,
+        )
 
 
 def main() -> None:

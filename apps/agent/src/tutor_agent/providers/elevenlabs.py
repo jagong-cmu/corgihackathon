@@ -54,6 +54,7 @@ class ElevenLabsTTS:
         base_url: str = _BASE_URL,
         timeout: float = 10.0,
         output_format: str = DEFAULT_OUTPUT_FORMAT,
+        voice_settings: dict | None = None,
     ) -> None:
         try:
             import httpx
@@ -63,11 +64,21 @@ class ElevenLabsTTS:
             ) from exc
 
         self.output_format = output_format
+        # Persona-tuned stability/similarity_boost. Without sending these, a
+        # cloned voice runs on the server-side defaults and the tuned values in
+        # the persona store silently do nothing.
+        self.voice_settings = voice_settings
         self._client = httpx.AsyncClient(
             base_url=base_url,
             timeout=timeout,
             headers={"xi-api-key": api_key},
         )
+
+    def _body(self, text: str, model: str) -> dict:
+        body: dict = {"text": text, "model_id": model}
+        if self.voice_settings:
+            body["voice_settings"] = self.voice_settings
+        return body
 
     # -- blocking -----------------------------------------------------------
 
@@ -82,7 +93,7 @@ class ElevenLabsTTS:
         response = await self._client.post(
             f"/text-to-speech/{voice_id}/with-timestamps",
             params={"output_format": self.output_format},
-            json={"text": text, "model_id": model},
+            json=self._body(text, model),
         )
         response.raise_for_status()
         payload = response.json()
@@ -122,7 +133,7 @@ class ElevenLabsTTS:
             "POST",
             f"/text-to-speech/{voice_id}/stream/with-timestamps",
             params={"output_format": self.output_format},
-            json={"text": text, "model_id": model},
+            json=self._body(text, model),
         ) as response:
             response.raise_for_status()
             async for line in response.aiter_lines():

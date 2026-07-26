@@ -28,7 +28,7 @@ interface Props {
 export function LiveTutorStage({ idleSpeech, idleVoiceLabel }: Props) {
   const { live, options, optionsLoaded, configured } = useLiveTutorContext();
   const { activeTutor } = useTutors();
-  const { state, start, end, toggleMic, setNarrationElement } = live;
+  const { state, start, end, toggleMic, setNarrationElement, enableAudio } = live;
   const videoRef = useRef<HTMLVideoElement>(null);
 
   // Show the avatar's face the moment its video track arrives. Its voice
@@ -102,6 +102,15 @@ export function LiveTutorStage({ idleSpeech, idleVoiceLabel }: Props) {
               : "Waiting for the tutor agent to join…"}
         </div>
         {state.micError && <div className="live-warn">⚠ {state.micError}</div>}
+        {state.audioBlocked && (
+          <button
+            type="button"
+            className="ask-btn live-start"
+            onClick={() => void enableAudio()}
+          >
+            🔊 Enable sound
+          </button>
+        )}
 
         <div className="live-controls">
           {connecting ? (

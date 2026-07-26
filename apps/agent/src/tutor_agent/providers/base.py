@@ -138,6 +138,15 @@ class AvatarProvider(Protocol):
 
     async def push_audio(self, audio: bytes) -> None: ...
 
+    async def flush(self) -> None:
+        """One turn's audio is complete — mark the segment boundary.
+
+        Stream-transport avatars (LiveKit data streams) carry each segment on
+        its own stream and can only recover from a barge-in at a segment
+        boundary, so the session must call this once per turn after the last
+        push_audio.
+        """
+
     async def interrupt(self) -> None:
         """Drop queued audio the learner has interrupted.
 

@@ -51,6 +51,13 @@ export interface LiveTutorState {
   tutorPresent: boolean;
   /** True while a remote participant is talking — drives the orb pulse. */
   tutorSpeaking: boolean;
+  /**
+   * True when the browser refused to autoplay the tutor's audio (no user
+   * gesture on this origin yet — Safari, iOS, fresh deploys). The session is
+   * healthy; the user just has to tap once. Surface a button that calls
+   * enableAudio(), or the tutor is silent and looks broken.
+   */
+  audioBlocked: boolean;
   /** The avatar's face, when the persona has one. Attach to a <video>. */
   videoTrack: RemoteVideoTrack | null;
   /**
@@ -69,6 +76,7 @@ const IDLE: LiveTutorState = {
   micError: null,
   tutorPresent: false,
   tutorSpeaking: false,
+  audioBlocked: false,
   videoTrack: null,
   videoAudioTrack: null,
 };
@@ -87,6 +95,8 @@ export interface LiveTutorApi {
    * the hook clocks off its own hidden <audio> elements.
    */
   setNarrationElement: (el: HTMLMediaElement | null) => void;
+  /** Retry blocked audio playback (must be called from a user gesture). */
+  enableAudio: () => Promise<void>;
 }
 
 export function useLiveTutor(
@@ -119,8 +129,17 @@ export function useLiveTutor(
     narrationElRef.current = el;
     const clock = clockRef.current;
     if (!clock) return;
-    if (el) clock.attach(el);
-    else if (previous) clock.detach(previous);
+    if (el) {
+      if (clock.element !== el) clock.attach(el);
+      return;
+    }
+    if (previous) clock.detach(previous);
+    // The narration element is gone (the avatar died and its tracks left).
+    // Fall back to a standalone <audio> element if one exists — the worker
+    // republishes its own voice track on avatar death, and without a clock
+    // every pending whiteboard cue starves.
+    const fallback = audioElsRef.current.values().next().value;
+    if (fallback && clock.element !== fallback.el) clock.attach(fallback.el);
   }, []);
 
   const cleanup = useCallback(() => {
@@ -238,16 +257,20 @@ export function useLiveTutor(
             el.style.display = "none";
             document.body.appendChild(el);
             els.set(sid, { track, el });
-            // This element is now the narration — cue timing reads from it.
-            clock.attach(el);
           }
         }
 
-        // The clock lost its element (e.g. the worker unpublished its silent
-        // tutor-voice track once the avatar took over) — fall back to the
-        // stage-registered narration element so cues keep firing.
-        if (!clock.element && narrationElRef.current) {
-          clock.attach(narrationElRef.current);
+        // Reconcile the cue clock's source: the stage-registered narration
+        // element (the avatar's <video>) always wins; otherwise any standalone
+        // <audio> (a voice-only tutor, or the worker's re-published voice
+        // after avatar death). Never let a random new audio track hijack a
+        // registered narration clock — attach() rebases the timeline and
+        // strands every in-flight turn's cues.
+        const desired = narrationElRef.current ?? els.values().next().value?.el ?? null;
+        if (desired) {
+          if (clock.element !== desired) clock.attach(desired);
+        } else if (clock.element) {
+          clock.detach(clock.element);
         }
 
         patch({ videoTrack, videoAudioTrack });
@@ -270,6 +293,11 @@ export function useLiveTutor(
               (p) => p.identity !== room.localParticipant.identity
             ),
           });
+        })
+        .on(RoomEvent.AudioPlaybackStatusChanged, () => {
+          // attach() swallows a rejected play() — this event is the only
+          // signal that the tutor is talking into a muted browser.
+          patch({ audioBlocked: !room.canPlaybackAudio });
         })
         .on(RoomEvent.Disconnected, cleanup);
 
@@ -313,6 +341,17 @@ export function useLiveTutor(
     [cleanup, patch]
   );
 
+  const enableAudio = useCallback(async () => {
+    const room = roomRef.current;
+    if (!room) return;
+    try {
+      await room.startAudio();
+      patch({ audioBlocked: false });
+    } catch {
+      // Still blocked — the button stays up and the user can tap again.
+    }
+  }, [patch]);
+
   const toggleMic = useCallback(async () => {
     const room = roomRef.current;
     if (!room) return;
@@ -325,5 +364,5 @@ export function useLiveTutor(
     }
   }, [patch]);
 
-  return { state, start, end, toggleMic, setNarrationElement };
+  return { state, start, end, toggleMic, setNarrationElement, enableAudio };
 }

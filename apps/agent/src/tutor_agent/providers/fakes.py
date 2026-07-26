@@ -118,6 +118,7 @@ class FakeAvatar:
 
     started_with: str | None = None
     audio_chunks: list[bytes] = field(default_factory=list)
+    flushed: int = 0
     interrupted: int = 0
     paused: int = 0
     stopped: bool = False
@@ -127,6 +128,9 @@ class FakeAvatar:
 
     async def push_audio(self, audio: bytes) -> None:
         self.audio_chunks.append(audio)
+
+    async def flush(self) -> None:
+        self.flushed += 1
 
     async def interrupt(self) -> None:
         self.interrupted += 1
