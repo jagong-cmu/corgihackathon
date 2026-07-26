@@ -25,6 +25,7 @@ export type Primitive =
   | "vector_diagram"
   | "geometry"
   | "number_line"
+  | "animated_diagram"
   | "equation"
   | "freeform_scene";
 
@@ -117,4 +118,35 @@ export interface FreeformSceneContent {
 export interface EquationContent {
   /** A TeX string, e.g. "\\frac{d}{dx} x^2 = 2x". */
   tex: string;
+}
+
+export interface VectorDiagramContent {
+  /**
+   * One or more 2D vectors. Each is drawn from `tail` (default origin) to `tip`.
+   * Authoring tip-to-tail (each vector's tail = previous tip) + `showResultant`
+   * demonstrates vector addition.
+   */
+  vectors: Array<{
+    id: string;
+    tail?: [number, number];
+    tip: [number, number];
+    label?: string;
+    /** Marker ink: "blue" | "berry" | "sage" | "amber". */
+    color?: string;
+  }>;
+  /** Draw the sum (origin → sum of all displacements) as a final resultant. */
+  showResultant?: boolean;
+  /** Symmetric view half-extent; auto-fit from the vectors when omitted. */
+  extent?: number;
+}
+
+export interface NumberLineContent {
+  min: number;
+  max: number;
+  /** Tick spacing (default 1). */
+  step?: number;
+  /** Labeled marks on the line. `open` renders a hollow (excluded) endpoint. */
+  points?: Array<{ x: number; label?: string; color?: string; open?: boolean }>;
+  /** A highlighted interval [from, to] drawn above the line. */
+  interval?: { from: number; to: number; label?: string; color?: string };
 }

@@ -6,11 +6,33 @@
  */
 import type { TurnResponse } from "./api";
 import type { VisualSpec } from "./spec/visualSpec";
+import { vectorDiagramExample, numberLineExample } from "./spec/examples";
 
 export function clientMockTurn(userQuery: string): TurnResponse {
   const q = userQuery.toLowerCase();
   const wantsPlot =
     /\b(graph|plot|function|derivative|tangent|parabola|curve|x\^?2|sin|cos)\b/.test(q);
+  const wantsVector = /\b(vector|vectors|resultant|magnitude|force|displacement)\b/.test(q);
+  const wantsNumberLine =
+    /(number line|interval|inequality|less than|greater than|\bbetween\b|\[\s*-?\d)/.test(q);
+
+  if (wantsVector) {
+    return {
+      spokenText:
+        "Here are two vectors, tip to tail — then I add them to get the resultant. (Offline demo — this static build has no live LLM backend.)",
+      visualSpec: vectorDiagramExample,
+      llm: false,
+    };
+  }
+
+  if (wantsNumberLine) {
+    return {
+      spokenText:
+        "On the number line: everything greater than negative one and up to three — open at −1, closed at 3. (Offline demo — this static build has no live LLM backend.)",
+      visualSpec: numberLineExample,
+      llm: false,
+    };
+  }
 
   if (wantsPlot) {
     const spec: VisualSpec = {

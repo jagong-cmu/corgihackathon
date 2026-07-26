@@ -6,6 +6,7 @@
 import { z } from "zod";
 import { SPEC_VERSION } from "./visualSpec";
 import type { VisualSpec } from "./visualSpec";
+import { animatedDiagramContentSchema } from "./animatedDiagram";
 
 const annotationSchema = z.object({
   type: z.string(),
@@ -33,6 +34,7 @@ export const visualSpecSchema = z.object({
     "vector_diagram",
     "geometry",
     "number_line",
+    "animated_diagram",
     "equation",
     "freeform_scene",
   ]),
@@ -69,12 +71,59 @@ const equationContentSchema = z.object({
   tex: z.string().min(1),
 });
 
+const point2 = z.tuple([z.number(), z.number()]);
+
+const vectorDiagramContentSchema = z.object({
+  vectors: z
+    .array(
+      z.object({
+        id: z.string().min(1),
+        tail: point2.optional(),
+        tip: point2,
+        label: z.string().optional(),
+        color: z.string().optional(),
+      })
+    )
+    .min(1),
+  showResultant: z.boolean().optional(),
+  extent: z.number().positive().optional(),
+});
+
+const numberLineContentSchema = z
+  .object({
+    min: z.number(),
+    max: z.number(),
+    step: z.number().positive().optional(),
+    points: z
+      .array(
+        z.object({
+          x: z.number(),
+          label: z.string().optional(),
+          color: z.string().optional(),
+          open: z.boolean().optional(),
+        })
+      )
+      .optional(),
+    interval: z
+      .object({
+        from: z.number(),
+        to: z.number(),
+        label: z.string().optional(),
+        color: z.string().optional(),
+      })
+      .optional(),
+  })
+  .refine((c) => c.max > c.min, { message: "max must be greater than min" });
+
 const contentSchemaByPrimitive: Partial<
   Record<VisualSpec["primitive"], z.ZodTypeAny>
 > = {
   function_plot: functionPlotContentSchema,
   freeform_scene: freeformSceneContentSchema,
   equation: equationContentSchema,
+  vector_diagram: vectorDiagramContentSchema,
+  number_line: numberLineContentSchema,
+  animated_diagram: animatedDiagramContentSchema,
 };
 
 export type ValidationResult =

@@ -32,6 +32,65 @@ export const functionPlotExample: VisualSpec = {
   ],
 };
 
+/**
+ * Track 1 demo: vector addition. Two vectors drawn tip-to-tail, then the
+ * resultant (origin → sum) snaps in — the classic "a + b" picture.
+ */
+export const vectorDiagramExample: VisualSpec = {
+  specVersion: 1,
+  track: "deterministic",
+  primitive: "vector_diagram",
+  content: {
+    vectors: [
+      { id: "a", tail: [0, 0], tip: [3, 1], label: "a", color: "blue" },
+      { id: "b", tail: [3, 1], tip: [4, 4], label: "b", color: "berry" },
+    ],
+    showResultant: true,
+  },
+  drawSequence: [
+    { id: "axes", element: "coordinate-plane", durationMs: 300 },
+    { id: "va", element: "vector-a", durationMs: 900 },
+    { id: "vb", element: "vector-b", durationMs: 900 },
+    { id: "vr", element: "resultant", durationMs: 800 },
+  ],
+  syncCues: [
+    { stepId: "axes", atMs: 0 },
+    { stepId: "va", onPhrase: "first vector", atMs: 400 },
+    { stepId: "vb", onPhrase: "second vector", atMs: 1500 },
+    { stepId: "vr", onPhrase: "add them", atMs: 2700 },
+  ],
+};
+
+/**
+ * Track 1 demo: a number line with a highlighted interval and open/closed
+ * endpoints — e.g. "x is greater than −1 and at most 3", i.e. (−1, 3].
+ */
+export const numberLineExample: VisualSpec = {
+  specVersion: 1,
+  track: "deterministic",
+  primitive: "number_line",
+  content: {
+    min: -5,
+    max: 5,
+    step: 1,
+    interval: { from: -1, to: 3, label: "-1 < x ≤ 3", color: "amber" },
+    points: [
+      { x: -1, label: "-1", color: "berry", open: true },
+      { x: 3, label: "3", color: "sage", open: false },
+    ],
+  },
+  drawSequence: [
+    { id: "line", element: "line", durationMs: 1100 },
+    { id: "interval", element: "interval", durationMs: 900 },
+    { id: "points", element: "points", durationMs: 400 },
+  ],
+  syncCues: [
+    { stepId: "line", atMs: 0 },
+    { stepId: "interval", onPhrase: "between", atMs: 1300 },
+    { stepId: "points", onPhrase: "endpoints", atMs: 2400 },
+  ],
+};
+
 /** An intentionally broken spec, used to prove the KaTeX fallback fires. */
 export const brokenExample = {
   specVersion: 1,
