@@ -33,6 +33,10 @@ function check(name: string, cond: boolean, detail?: string) {
   check("BUILTIN_TUTORS includes nico", !!nico);
   check("nico has a voice", nico?.hasVoice === true);
   check("nico has an avatar provider", !!nico && nico.avatarProvider !== "none");
+  const aayush = BUILTIN_TUTORS.find((t) => t.id === "aayush");
+  check("BUILTIN_TUTORS includes aayush", !!aayush);
+  check("aayush has a voice", aayush?.hasVoice === true);
+  check("aayush has an avatar provider", !!aayush && aayush.avatarProvider !== "none");
   const ids = BUILTIN_TUTORS.map((t) => t.id);
   check("BUILTIN_TUTORS ids are unique", new Set(ids).size === ids.length);
 }
