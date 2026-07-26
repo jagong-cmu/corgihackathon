@@ -128,8 +128,18 @@ class TurnTimeline:
         self._char_count += len(chunk)
 
     def add_action(self, action: dict) -> PendingAction:
-        """Anchor an action at the current position in the text stream."""
-        pending = PendingAction(action=action, char_offset=self._char_count, seq=self._next_seq)
+        """Anchor an action at the current position in the text stream.
+
+        present_visual is the exception: it mounts the spec with every step
+        hidden, so there is nothing on it to sync to the narration — but
+        holding it until the opening words play means a barge-in before that
+        moment kills the whole board (the client drops the still-pending cue
+        with the cancelled turn, and the learner watches the tutor talk at a
+        blank whiteboard). Anchor it to the start of the turn instead; the
+        reveal_step cues that actually draw stay narration-anchored.
+        """
+        offset = 0 if action.get("type") == "present_visual" else self._char_count
+        pending = PendingAction(action=action, char_offset=offset, seq=self._next_seq)
         self._next_seq += 1
         self._pending.append(pending)
         return pending

@@ -70,6 +70,36 @@ class TestAnchoring:
         (action,) = timeline.resolve()
         assert action.cue_ms == 0
 
+    def test_present_visual_anchors_to_turn_start_not_narration(self):
+        # The model calls present_visual after its opening words, but the
+        # board must mount immediately: a cue held for the narration to reach
+        # it dies pending on the first barge-in, and the learner watches the
+        # tutor talk at a blank whiteboard.
+        timeline = TurnTimeline("t_0001")
+        timeline.add_text("Alright, let's look at the Pythagorean theorem. ")
+        timeline.add_action({"type": "present_visual", "spec": {"specVersion": 1}})
+        timeline.add_text("First, here's the triangle.")
+        timeline.add_action({"type": "reveal_step", "stepId": "triangle"})
+        timeline.attach_timings(synthetic_timings(timeline.speech_text))
+
+        present, reveal = timeline.resolve()
+        assert present.action["type"] == "present_visual"
+        assert present.cue_ms == 0
+        # reveal_step keeps its narration anchor.
+        assert reveal.cue_ms > 0
+
+    def test_present_visual_emits_with_first_synthesized_segment(self):
+        # Sentence-at-a-time synthesis: the board frame must go out with the
+        # first segment, not wait for its narration anchor to be covered.
+        timeline = TurnTimeline("t_0001")
+        timeline.add_text("Okay, here's the idea. ")
+        timeline.add_action({"type": "present_visual", "spec": {"specVersion": 1}})
+        timeline.attach_timings(synthetic_timings("Okay, here's the idea. "))
+
+        ready = timeline.resolve_ready()
+        assert [a.action["type"] for a in ready] == ["present_visual"]
+        assert ready[0].cue_ms == 0
+
     def test_action_past_end_of_speech_fires_at_end_not_dropped(self):
         timeline = TurnTimeline("t_0001")
         timeline.add_text("Done.")

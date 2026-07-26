@@ -132,6 +132,31 @@ class TestValidation:
         assert result.dropped_actions[0][0] == "summon_demon"
         assert adapter.frames == []
 
+    async def test_invalid_action_reports_error_back_to_the_model(self):
+        # The provider turns ToolCall.error into an is_error tool_result. A
+        # success stub here is how "invalid present_visual" became "the tutor
+        # narrates a lesson at a blank board": the model never learned its
+        # spec was dropped, so it revealed steps nobody could see.
+        session, _ = _session(
+            [
+                ScriptedTurn(
+                    events=[
+                        "Watch. ",
+                        ("equation", {"x": 10}),  # missing required y, id, latex
+                        ("new_section", {"title": "Fine"}),
+                    ]
+                )
+            ]
+        )
+
+        await session.handle_transcript("go")
+
+        bad, good = session.llm.tool_events
+        assert bad.name == "equation"
+        assert bad.error is not None and "never reached the board" in bad.error
+        assert good.name == "new_section"
+        assert good.error is None
+
     async def test_valid_actions_survive_alongside_invalid_ones(self):
         session, adapter = _session(
             [

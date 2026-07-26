@@ -284,8 +284,16 @@ class TutorSession:
 
                 errors = validate_action(event.name, event.input)
                 if errors:
-                    # Drop, log, continue. Never raise on the render path.
+                    # Drop, log, continue. Never raise on the render path. The
+                    # error rides back on the event so the provider returns an
+                    # is_error tool_result — the model must know the board
+                    # never got this action, or it reveals steps of a visual
+                    # the learner cannot see.
                     dropped.append((event.name, errors))
+                    event.error = (
+                        f"Rejected — this {event.name} never reached the board. "
+                        f"Fix these problems and call it again: " + "; ".join(errors)
+                    )
                     log.warning(
                         "dropping invalid action %s in %s: %s",
                         event.name,
