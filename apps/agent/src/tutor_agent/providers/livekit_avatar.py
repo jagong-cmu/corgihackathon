@@ -65,6 +65,15 @@ AVATAR_SAMPLE_RATE = 16_000
 # (apps/api .../blobs.py writes them). Kept in sync by test_realtime_adapter.
 BLOB_REF_PREFIX = "blob:"
 
+# LemonSlice's API sits behind Vercel, which rejects request bodies over 4.5MB
+# (413 FUNCTION_PAYLOAD_TOO_LARGE) — and the vendor plugin re-encodes the photo
+# as PNG for the multipart upload, so a 1.6MB phone JPEG becomes a 7MB payload
+# and the handshake dies. The budget leaves headroom for multipart framing.
+# The avatar is built from one face photo; detail past ~1024px on the long
+# edge adds nothing but payload (LemonSlice's own agent crops are 480x720).
+UPLOAD_BUDGET_BYTES = int(3.5 * 1024 * 1024)
+UPLOAD_MAX_EDGE_PX = 1024
+
 # How long one audio write may block before the avatar is declared dead. The
 # FIRST write legitimately blocks while DataStreamAudioOutput waits for the
 # avatar participant to join and publish video — many seconds on a normal
@@ -110,10 +119,57 @@ def load_blob_image(ref: str, *, dsn: str | None) -> Image.Image | None:
             return None
         image = PILImage.open(io.BytesIO(bytes(row[0])))
         image.load()  # decode now, inside the thread that owns the bytes
-        return image
+        return fit_upload_budget(image)
     except Exception:
         log.exception("failed to load avatar photo blob %s", blob_id)
         return None
+
+
+def fit_upload_budget(image: Image.Image) -> Image.Image:
+    """Downscale a photo until its PNG encoding fits the vendor's body cap.
+
+    Sized by trial encode rather than pixels alone: PNG size tracks image
+    content, so a fixed pixel cap can still blow the budget on a busy photo.
+    Floor of 256px on the long edge — below that the problem isn't size.
+
+    Also bakes EXIF orientation into the pixels first: phone photos store the
+    rotation as metadata, browsers apply it, but PNG has nowhere to carry it —
+    without the transpose LemonSlice builds a sideways talking head.
+    """
+    import io
+
+    from PIL import Image as PILImage
+    from PIL import ImageOps
+
+    # Only transpose when the tag says so — exif_transpose copies even when
+    # there is nothing to do, and the no-EXIF webcam capture is the hot path.
+    orientation = image.getexif().get(0x0112, 1)
+    upright = (ImageOps.exif_transpose(image) or image) if orientation != 1 else image
+    fitted = upright if upright.mode in ("RGB", "L") else upright.convert("RGB")
+    edge = UPLOAD_MAX_EDGE_PX
+    while True:
+        longest = max(fitted.size)
+        if longest > edge:
+            ratio = edge / longest
+            fitted = fitted.resize(
+                (max(1, round(fitted.width * ratio)), max(1, round(fitted.height * ratio))),
+                PILImage.Resampling.LANCZOS,
+            )
+        buffer = io.BytesIO()
+        fitted.save(buffer, format="PNG")
+        if buffer.tell() <= UPLOAD_BUDGET_BYTES or edge <= 256:
+            if fitted.size != image.size or fitted.mode != image.mode:
+                log.info(
+                    "avatar photo fitted for upload: %dx%d %s -> %dx%d RGB (%.1fMB as PNG)",
+                    image.width,
+                    image.height,
+                    image.mode,
+                    fitted.width,
+                    fitted.height,
+                    buffer.tell() / 1048576,
+                )
+            return fitted
+        edge = int(edge * 0.7)
 
 
 @dataclass

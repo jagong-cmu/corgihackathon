@@ -3,6 +3,17 @@
 All notable changes to Chalk are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/) · versions are `MAJOR.MINOR.PATCH.MICRO`.
 
+## [0.1.7.0] - 2026-07-26
+
+### Fixed
+- Newly created tutors get their talking avatar again. A full-resolution phone
+  photo blew past the avatar vendor's 4.5MB upload cap (the plugin re-encodes
+  photos as PNG, turning a 1.6MB shot into a 7MB payload), so the handshake
+  failed and the session silently fell back to a static picture. Photos are
+  now downscaled to fit before upload.
+- Phone photos no longer produce a sideways avatar: EXIF rotation is baked
+  into the pixels before the upload strips it.
+
 ## [0.1.6.0] - 2026-07-26
 
 ### Changed

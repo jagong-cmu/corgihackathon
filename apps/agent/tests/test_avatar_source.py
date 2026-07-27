@@ -137,3 +137,77 @@ class TestLoadBlobImage:
 
     def test_no_dsn_is_none(self):
         assert load_blob_image(f"{BLOB_REF_PREFIX}whatever", dsn=None) is None
+
+
+class TestFitUploadBudget:
+    """LemonSlice sits behind Vercel's 4.5MB body cap, and the plugin uploads
+    the photo re-encoded as PNG — a full-res phone shot becomes a 7MB payload
+    and the handshake 413s, degrading the session to voice-only (the learner
+    sees a static photo instead of the talking avatar)."""
+
+    @staticmethod
+    def _png_size(image) -> int:
+        import io
+
+        buffer = io.BytesIO()
+        image.save(buffer, format="PNG")
+        return buffer.tell()
+
+    def test_full_res_phone_photo_fits_the_budget(self):
+        import os
+
+        from PIL import Image
+
+        from tutor_agent.providers.livekit_avatar import (
+            UPLOAD_BUDGET_BYTES,
+            fit_upload_budget,
+        )
+
+        # Noise is PNG's worst case — a real 4032x3024 photo compresses better.
+        noisy = Image.frombytes("RGB", (4032, 3024), os.urandom(4032 * 3024 * 3))
+        assert self._png_size(noisy) > UPLOAD_BUDGET_BYTES  # the bug's precondition
+
+        fitted = fit_upload_budget(noisy)
+
+        assert self._png_size(fitted) <= UPLOAD_BUDGET_BYTES
+        # Aspect ratio survives the downscale.
+        assert abs(fitted.width / fitted.height - 4032 / 3024) < 0.01
+
+    def test_small_photo_is_untouched(self):
+        from PIL import Image
+
+        from tutor_agent.providers.livekit_avatar import fit_upload_budget
+
+        small = Image.new("RGB", (480, 720), (120, 90, 60))
+        assert fit_upload_budget(small) is small
+
+    def test_exif_orientation_is_baked_into_the_pixels(self):
+        import io
+
+        from PIL import Image
+
+        from tutor_agent.providers.livekit_avatar import fit_upload_budget
+
+        # A landscape-stored JPEG tagged "rotate 90 CW" (orientation 6) — how
+        # phones store portrait shots. PNG can't carry the tag, so the pixels
+        # must be transposed or the avatar comes out sideways.
+        landscape = Image.new("RGB", (400, 300), (120, 90, 60))
+        exif = Image.Exif()
+        exif[0x0112] = 6
+        buffer = io.BytesIO()
+        landscape.save(buffer, format="JPEG", exif=exif)
+        stored = Image.open(io.BytesIO(buffer.getvalue()))
+
+        fitted = fit_upload_budget(stored)
+
+        assert (fitted.width, fitted.height) == (300, 400)
+
+    def test_alpha_and_palette_modes_convert_to_rgb(self):
+        from PIL import Image
+
+        from tutor_agent.providers.livekit_avatar import fit_upload_budget
+
+        rgba = Image.new("RGBA", (2000, 3000), (120, 90, 60, 255))
+        fitted = fit_upload_budget(rgba)
+        assert fitted.mode == "RGB"
+        assert max(fitted.size) <= 1024
