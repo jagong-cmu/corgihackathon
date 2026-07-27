@@ -80,7 +80,7 @@ export const BUILTIN_TUTORS: TutorOption[] = [
   // Nico is the home page's default tutor (TutorContext DEFAULT_PERSONA_ID) —
   // if it's missing from this floor list, a persona-API outage leaves the
   // default seat empty and the Start button dead.
-  { id: "nico", name: "Nico", hasVoice: true, avatarProvider: "lemonslice", photoUrl: null },
+  { id: "nico", name: "Nico", hasVoice: true, avatarProvider: "lemonslice", photoUrl: "/tutors/nico.jpg" },
   { id: "ada", name: "Ada", hasVoice: true, avatarProvider: "lemonslice", photoUrl: null },
   { id: "coach-rios", name: "Coach Rios", hasVoice: true, avatarProvider: "lemonslice", photoUrl: null },
 ];
@@ -133,15 +133,35 @@ export function avatarPhotoUrl(ref: string | null | undefined): string | null {
   return null;
 }
 
+/**
+ * Bundled portraits for tutors whose avatar_ref is a provider-side id (a
+ * LemonSlice agent) rather than a photo the API can serve. They are the same
+ * photos the avatars were built from, committed under public/tutors/ so the
+ * roster shows a face on every tier — including the no-backend BUILTIN floor
+ * and the deployed /api/live/tutors list, neither of which can resolve a
+ * provider id to an image.
+ */
+export const BUNDLED_TUTOR_PHOTOS: Record<string, string> = {
+  nico: "/tutors/nico.jpg",
+  aayush: "/tutors/aayush.jpg",
+};
+
+/** Fill photoUrl from the bundled portraits when a tier couldn't provide one. */
+export function withBundledPhoto(option: TutorOption): TutorOption {
+  if (option.photoUrl) return option;
+  const bundled = BUNDLED_TUTOR_PHOTOS[option.id];
+  return bundled ? { ...option, photoUrl: bundled } : option;
+}
+
 export function toOption(spec: TutorSpec): TutorOption {
-  return {
+  return withBundledPhoto({
     id: spec.id,
     name: spec.identity.name,
     hasVoice: Boolean(spec.voice?.voice_id),
     avatarProvider: spec.avatar?.provider ?? "none",
     photoUrl:
       (spec.avatar?.provider ?? "none") === "none" ? null : avatarPhotoUrl(spec.avatar?.avatar_ref),
-  };
+  });
 }
 
 /**
@@ -217,7 +237,12 @@ export async function listDeployedTutors(): Promise<TutorOption[] | null> {
     const res = await fetch("/api/live/tutors");
     if (!res.ok) return null;
     const body = await res.json();
-    return Array.isArray(body?.tutors) && body.tutors.length ? body.tutors : null;
+    if (!Array.isArray(body?.tutors) || !body.tutors.length) return null;
+    // The deployed list has no photoUrl field at all — normalize it in, then
+    // fill from the bundled portraits.
+    return body.tutors.map((t: TutorOption) =>
+      withBundledPhoto({ ...t, photoUrl: t.photoUrl ?? null })
+    );
   } catch {
     return null;
   }
