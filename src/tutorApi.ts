@@ -242,9 +242,73 @@ export async function assignVoice(slug: string, voiceId: string): Promise<void> 
 }
 
 /** Clone a voice from an uploaded sample (1-2 min of clear speech). */
+/**
+ * Vercel serverless functions reject request bodies over ~4.5MB at the
+ * platform level (a bare 413 that never reaches our code), and a WAV of a
+ * minute already exceeds that. Instant cloning only uses 1-2 minutes of
+ * speech, so anything oversized is decoded and re-encoded down to mono
+ * 22.05kHz WAV capped at 80s — always comfortably under the limit.
+ */
+const MAX_UPLOAD_BYTES = 3_500_000;
+const CLONE_SAMPLE_RATE = 22_050;
+const CLONE_MAX_SECONDS = 80;
+
+async function shrinkAudioForUpload(file: File): Promise<File> {
+  if (file.size <= MAX_UPLOAD_BYTES) return file;
+  try {
+    const decoder = new AudioContext();
+    const decoded = await decoder.decodeAudioData(await file.arrayBuffer());
+    void decoder.close();
+    const seconds = Math.min(decoded.duration, CLONE_MAX_SECONDS);
+    const offline = new OfflineAudioContext(
+      1,
+      Math.ceil(seconds * CLONE_SAMPLE_RATE),
+      CLONE_SAMPLE_RATE
+    );
+    const source = offline.createBufferSource();
+    source.buffer = decoded;
+    source.connect(offline.destination);
+    source.start();
+    const rendered = await offline.startRendering();
+    return new File([wavBytes(rendered)], file.name.replace(/\.[^.]*$/, "") + ".wav", {
+      type: "audio/wav",
+    });
+  } catch {
+    // Undecodable in this browser — send as-is and let the server answer.
+    return file;
+  }
+}
+
+/** Minimal RIFF/PCM16 encoder for a mono AudioBuffer. */
+function wavBytes(buffer: AudioBuffer): ArrayBuffer {
+  const samples = buffer.getChannelData(0);
+  const view = new DataView(new ArrayBuffer(44 + samples.length * 2));
+  const writeStr = (off: number, s: string) => {
+    for (let i = 0; i < s.length; i++) view.setUint8(off + i, s.charCodeAt(i));
+  };
+  writeStr(0, "RIFF");
+  view.setUint32(4, 36 + samples.length * 2, true);
+  writeStr(8, "WAVE");
+  writeStr(12, "fmt ");
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
+  view.setUint32(24, buffer.sampleRate, true);
+  view.setUint32(28, buffer.sampleRate * 2, true);
+  view.setUint16(32, 2, true);
+  view.setUint16(34, 16, true);
+  writeStr(36, "data");
+  view.setUint32(40, samples.length * 2, true);
+  for (let i = 0; i < samples.length; i++) {
+    const s = Math.max(-1, Math.min(1, samples[i]));
+    view.setInt16(44 + i * 2, s < 0 ? s * 0x8000 : s * 0x7fff, true);
+  }
+  return view.buffer;
+}
+
 export async function cloneVoice(slug: string, file: File): Promise<{ voice_id: string }> {
   const form = new FormData();
-  form.append("file", file);
+  form.append("file", await shrinkAudioForUpload(file));
   return request<{ voice_id: string; cloned: boolean }>(`/personas/${slug}/voice`, {
     method: "POST",
     body: form,
@@ -390,8 +454,12 @@ export async function createTutorFromCapture(
     try {
       await cloneVoice(slug, await objectUrlToAudioFile(input.voiceUrl, `${slug}-voice`));
     } catch (err) {
+      const message =
+        (err as Error).message === "413"
+          ? "the sample is too large for the server — trim it to under ~2 minutes"
+          : (err as Error).message;
       warnings.push(
-        `Voice cloning failed (${(err as Error).message}) — assign a voice in the Tutors panel; sessions need one.`
+        `Voice cloning failed (${message}) — assign a voice in the Tutors panel; sessions need one.`
       );
     }
   } else {
