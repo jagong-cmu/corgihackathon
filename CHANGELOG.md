@@ -14,6 +14,15 @@ Format: [Keep a Changelog](https://keepachangelog.com/) · versions are `MAJOR.M
 - Phone photos no longer produce a sideways avatar: EXIF rotation is baked
   into the pixels before the upload strips it.
 
+## [0.1.6.0] - 2026-07-26
+
+### Changed
+- Nico and Aayush show their actual portraits everywhere a tutor face appears
+  (sidebar roster, tutor card, presenter face-cam) instead of a lettered
+  monogram. The portraits are the same photos their avatars were built from,
+  bundled with the app so they show on every roster tier — even with no
+  backend reachable.
+
 ## [0.1.5.0] - 2026-07-26
 
 ### Changed
