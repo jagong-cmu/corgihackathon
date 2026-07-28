@@ -323,26 +323,65 @@ async def check_elevenlabs_tts(report: Report, persona) -> None:
 
 async def check_elevenlabs_stt(report: Report) -> None:
     section("elevenlabs stt (scribe)")
-    if not os.environ.get("ELEVENLABS_API_KEY"):
+    api_key = os.environ.get("ELEVENLABS_API_KEY")
+    if not api_key:
         report.add(Result("construct", Status.SKIP, "no key"))
         return
     try:
-        from livekit.plugins import elevenlabs as lk_elevenlabs
+        import aiohttp
 
         from tutor_agent.adapters.worker import STT_SAMPLE_RATE, VAD_OPTIONS
 
-        stt = lk_elevenlabs.STT(
-            use_realtime=True, sample_rate=STT_SAMPLE_RATE, server_vad=VAD_OPTIONS
+        # The websocket handshake, not just client construction: the API
+        # validates VAD params at connect and rejects the whole socket with
+        # 1008 invalid_request on a bad value (learned 2026-07-27, when a
+        # vad_silence_threshold_secs below the 0.3s floor shipped and every
+        # session came up deaf — while this check, then construction-only,
+        # passed). Params mirror the plugin's _connect_ws, name for name:
+        # VAD_OPTIONS keys pass through to the query string unchanged.
+        query = "&".join(
+            [
+                "model_id=scribe_v2_realtime",
+                f"audio_format=pcm_{STT_SAMPLE_RATE}",
+                "commit_strategy=vad",
+                *(f"{key}={value}" for key, value in VAD_OPTIONS.items()),
+            ]
         )
+        started = time.perf_counter()
+        async with aiohttp.ClientSession() as http:
+            ws = await http.ws_connect(
+                f"wss://api.elevenlabs.io/v1/speech-to-text/realtime?{query}",
+                headers={"xi-api-key": api_key},
+            )
+            first = await asyncio.wait_for(ws.receive(), timeout=10)
+            await ws.close()
+        opened = (
+            first.type == aiohttp.WSMsgType.TEXT
+            and first.json().get("message_type") == "session_started"
+        )
+        if not opened:
+            detail = (
+                first.json().get("message_type")
+                if first.type == aiohttp.WSMsgType.TEXT
+                else f"close {first.data} {first.extra or ''}".strip()
+            )
+            report.add(
+                Result(
+                    "realtime stt",
+                    Status.FAIL,
+                    f"handshake answered {detail!r}, not session_started",
+                    "the API rejected the key or VAD_OPTIONS (adapters/worker.py)",
+                )
+            )
+            return
         report.add(
             Result(
                 "realtime stt",
                 Status.PASS,
-                f"{STT_SAMPLE_RATE}Hz, "
+                f"session_started in {(time.perf_counter() - started) * 1000:.0f}ms, "
                 f"finalizes after {VAD_OPTIONS['min_silence_duration_ms']}ms of silence",
             )
         )
-        await stt.aclose()
 
         silence = VAD_OPTIONS["min_silence_duration_ms"]
         if silence > BUDGET_MS / 2:
