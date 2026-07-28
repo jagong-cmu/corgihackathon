@@ -38,7 +38,7 @@ interface Props {
 }
 
 const STYLES = [
-  ["socratic", "Socratic — answers with questions"],
+  ["socratic", "Socratic — guides with questions"],
   ["direct", "Direct — states it, then explains"],
   ["worked_example", "Worked example — shows, then hands over"],
   ["story", "Story — narrative first, formal second"],
@@ -92,14 +92,14 @@ export function TutorsPanel({ open, onClose, onChanged }: Props) {
     <div className="tutors-overlay" onClick={onClose}>
       <aside
         className="tutors-panel"
-        aria-label="Your tutors"
+        aria-label="Your assistants"
         onClick={(e) => e.stopPropagation()}
       >
         <header className="tutors-head">
           <div>
-            <div className="tutors-title">Your tutors</div>
+            <div className="tutors-title">Your assistants</div>
             <div className="tutors-sub">
-              Design a tutor, give it a voice and a face, then start a session.
+              Design an assistant, give it a voice and a face, then start a session.
             </div>
           </div>
           <button type="button" className="icon-btn" onClick={onClose}>
@@ -460,7 +460,7 @@ function CreateTutorForm({
   const [name, setName] = useState("");
   const [relationship, setRelationship] = useState("the learner's tutor");
   const [bio, setBio] = useState("");
-  const [style, setStyle] = useState<string>("socratic");
+  const [style, setStyle] = useState<string>("direct");
   const [verbosity, setVerbosity] = useState<string>("medium");
   const [warmth, setWarmth] = useState<string>("medium");
   const [formality, setFormality] = useState<string>("low");
@@ -546,7 +546,7 @@ function CreateTutorForm({
       </div>
 
       <label className="tutors-label">
-        Bio (a sentence or two the tutor may reference)
+        Bio (a sentence or two the assistant may reference)
         <input
           className="tutors-input"
           type="text"
@@ -662,7 +662,7 @@ function CreateTutorForm({
 
       <div className="tutor-editor-row">
         <button className="ask-btn" type="submit" disabled={!slug || busy}>
-          {busy ? "Creating…" : "Create tutor"}
+          {busy ? "Creating…" : "Create assistant"}
         </button>
         <span className="tutors-hint">Next: assign a voice — sessions need one.</span>
       </div>

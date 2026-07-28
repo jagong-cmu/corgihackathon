@@ -130,11 +130,11 @@ export function Sidebar() {
             closeSidebar();
           }}
         >
-          <span className="sb-plus">＋</span> New tutoring session
+          <span className="sb-plus">＋</span> New session
         </button>
 
         <section className="sb-section">
-          <h2 className="sb-label">Your tutors</h2>
+          <h2 className="sb-label">Your assistants</h2>
           <ul className="sb-tutors">
             {tutors.map((t) => {
               const active = t.id === activeTutor.id;
@@ -158,7 +158,7 @@ export function Sidebar() {
                         {t.id === "trudy"
                           ? "Corgi"
                           : t.personaId
-                            ? "Voice tutor"
+                            ? "Voice assistant"
                             : "Custom"}
                       </span>
                     </span>
@@ -201,7 +201,7 @@ export function Sidebar() {
               closeSidebar();
             }}
           >
-            <span className="sb-plus">＋</span> Create a new tutor
+            <span className="sb-plus">＋</span> Create a new assistant
           </button>
           <button
             type="button"
@@ -211,7 +211,7 @@ export function Sidebar() {
               closeSidebar();
             }}
           >
-            Manage voice tutors
+            Manage assistants
           </button>
         </section>
 

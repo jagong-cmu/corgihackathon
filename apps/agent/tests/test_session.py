@@ -560,10 +560,11 @@ class TestPromptAssembly:
         assert call["messages"][-1]["content"] == "hello"
 
     async def test_whiteboard_tools_are_attached_by_default(self):
-        """The default toolset offers present_visual ONLY. Reveals ride inline
-        as [[reveal:...]] markers — a reveal_step TOOL would end the message
-        and cost a round trip of dead air per narration beat, so it is not
-        offered even though the wire action still exists."""
+        """The default toolset offers present_visual as the only CLIENT tool.
+        Reveals ride inline as [[reveal:...]] markers — a reveal_step TOOL
+        would end the message and cost a round trip of dead air per narration
+        beat, so it is not offered even though the wire action still exists.
+        web_search rides along as a server-side tool the API executes itself."""
         llm = FakeLLM([ScriptedTurn(events=["Ok."])])
         session = TutorSession(
             persona=_persona(), llm=llm, tts=FakeTTS(), channel=RecordingAdapter()
@@ -571,8 +572,38 @@ class TestPromptAssembly:
         await session.handle_transcript("hi")
 
         names = {t["name"] for t in llm.calls[0]["tools"]}
+        assert names == {"present_visual", "web_search"}
+        canvas_tools = [t for t in llm.calls[0]["tools"] if "type" not in t]
+        assert all(t["eager_input_streaming"] for t in canvas_tools)
+
+    async def test_web_search_is_a_server_tool_with_a_use_cap(self):
+        """The web_search def is Anthropic's server-side tool: typed, capped,
+        and never a client action — the client renders nothing for it."""
+        llm = FakeLLM([ScriptedTurn(events=["Ok."])])
+        session = TutorSession(
+            persona=_persona(), llm=llm, tts=FakeTTS(), channel=RecordingAdapter()
+        )
+        await session.handle_transcript("hi")
+
+        (search,) = [t for t in llm.calls[0]["tools"] if t["name"] == "web_search"]
+        assert search["type"] == "web_search_20260209"
+        assert search["max_uses"] == SessionConfig().web_search_max_uses
+
+    async def test_web_search_can_be_disabled(self):
+        """TUTOR_WEB_SEARCH=0 (worker) maps to web_search=False here — the
+        kill switch must actually remove the tool, not just hide it."""
+        llm = FakeLLM([ScriptedTurn(events=["Ok."])])
+        session = TutorSession(
+            persona=_persona(),
+            llm=llm,
+            tts=FakeTTS(),
+            channel=RecordingAdapter(),
+            config=SessionConfig(web_search=False),
+        )
+        await session.handle_transcript("hi")
+
+        names = {t["name"] for t in llm.calls[0]["tools"]}
         assert names == {"present_visual"}
-        assert all(t["eager_input_streaming"] for t in llm.calls[0]["tools"])
 
     async def test_canvas_toolset_opts_into_the_tldraw_actions(self):
         llm = FakeLLM([ScriptedTurn(events=["Ok."])])
@@ -588,9 +619,11 @@ class TestPromptAssembly:
         names = {t["name"] for t in llm.calls[0]["tools"]}
         assert "equation" in names
         assert "spawn_sim" in names
+        assert "web_search" in names
         # The whiteboard pair is offered too (canvas mode keeps the full set) —
         # a canvas client that can't render them drops them at validation.
-        assert all(t["eager_input_streaming"] for t in llm.calls[0]["tools"])
+        canvas_tools = [t for t in llm.calls[0]["tools"] if "type" not in t]
+        assert all(t["eager_input_streaming"] for t in canvas_tools)
 
     async def test_unknown_toolset_fails_loudly_at_session_setup(self):
         with pytest.raises(ValueError, match="toolset"):

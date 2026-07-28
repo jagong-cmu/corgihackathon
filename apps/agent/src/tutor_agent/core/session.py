@@ -123,6 +123,16 @@ class SessionConfig:
     The two are mutually exclusive per session: offering both lets the model
     draw on a board the learner can't see."""
 
+    web_search: bool = True
+    """Offer Anthropic's server-side web_search tool so the assistant can
+    answer questions about current events and anything past its training
+    cutoff. Executed API-side mid-stream — it never produces a ToolCall for
+    the client, only extra latency covered by the model's own narration."""
+
+    web_search_max_uses: int = 3
+    """Cap on searches per turn. This is a live voice loop — a model that
+    disappears into a five-search research spiral reads as a hang."""
+
 
 class TutorSession:
     def __init__(
@@ -194,6 +204,18 @@ class TutorSession:
         self._tools = canvas_tool_definitions(
             only=("present_visual",) if toolset == "whiteboard" else None
         )
+        if self.config.web_search:
+            # Server-side: the API runs the search itself and streams the
+            # results back inline, so the provider never yields it as a
+            # ToolCall and the client renders nothing for it. Appended after
+            # the canvas defs so the cached tool prefix stays byte-stable.
+            self._tools.append(
+                {
+                    "type": "web_search_20260209",
+                    "name": "web_search",
+                    "max_uses": self.config.web_search_max_uses,
+                }
+            )
 
         # Stable for the whole session, so it sits ahead of the cache breakpoint.
         # The rules block must match the toolset (build_system_prompt raises on
@@ -244,8 +266,9 @@ class TutorSession:
             return None
         rendered = "\n\n".join(f"[{c.chunk_id}] {c.text}" for c in chunks)
         return (
-            "Relevant excerpts from the learner's own materials. Teach from these "
-            "and use show_source when their notation matters:\n\n" + rendered
+            "Relevant excerpts from the user's own materials. Ground your answer "
+            "in these when they bear on the question, and use show_source when "
+            "their notation matters:\n\n" + rendered
         )
 
     def _build_messages(self, user_content: str) -> list[dict[str, Any]]:

@@ -62,7 +62,7 @@ ALLOWED_AUDIO_TYPES = {"audio/mpeg", "audio/mp4", "audio/wav", "audio/x-wav", "a
 
 app = FastAPI(
     title="Tutor API",
-    description="Create custom tutors: personas, avatars, and voices.",
+    description="Create custom voice assistants: personas, avatars, and voices.",
     version="0.1.0",
 )
 

@@ -3,6 +3,30 @@
 All notable changes to Chalk are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/) · versions are `MAJOR.MINOR.PATCH.MICRO`.
 
+## [0.1.9.0] - 2026-07-27
+
+### Changed
+- The agent is now a general-purpose voice assistant, not a subject-bound
+  tutor. The tutor-only framing lived entirely in prompt text, persona specs,
+  and tool descriptions (there was never guardrail code); all of it is
+  reframed across both LLM paths. A new scope section in every session's
+  system prompt declares any-topic help — general knowledge, advice, current
+  events, plain conversation — and overrides tutor wording in stored persona
+  specs. The Socratic style no longer withholds answers, and the whiteboard
+  mandate is softened: visuals when they help, plain speech when the answer
+  is just words.
+- Personas reframed to assistants; Ada's "I could, but…" answer-refusal
+  few-shot now gives the answer outright. New assistants default to the
+  direct style instead of socratic. UI copy follows ("Your assistants",
+  "Ready to help").
+
+### Added
+- Web access: Anthropic's server-side `web_search` tool rides in every voice
+  session (capped per turn; `TUTOR_WEB_SEARCH=0` disables). The prompt tells
+  the assistant to speak a short sentence before searching so the lookup runs
+  behind its voice. The provider round-trips server-tool and thinking blocks
+  across tool rounds and resumes `pause_turn` turns.
+
 ## [0.1.8.0] - 2026-07-27
 
 ### Fixed
