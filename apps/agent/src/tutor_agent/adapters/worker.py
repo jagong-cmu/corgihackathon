@@ -139,7 +139,11 @@ VAD_OPTIONS = {
     "min_silence_duration_ms": _VAD_SILENCE_MS,
     # In lockstep with the commit gate: the larger of the two is the endpoint
     # the learner actually waits on, so a fixed 0.5 here would cap the knob.
-    "vad_silence_threshold_secs": _VAD_SILENCE_MS / 1000,
+    # Floored at 0.3: the API rejects the whole websocket below it (1008
+    # invalid_request, probed 2026-07-27 — 0.25 fails, 0.3 connects), and a
+    # too-low value here isn't a slower tutor, it's a DEAF one: every STT
+    # stream dies at connect. min_silence_duration_ms has no such floor.
+    "vad_silence_threshold_secs": max(0.3, _VAD_SILENCE_MS / 1000),
     # Above the vendor default of 0.4 so trailing low-volume audio (breath,
     # the learner trailing off) reads as silence and starts the clock at the
     # volume drop, not after it.

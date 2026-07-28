@@ -305,6 +305,14 @@ class TestWorkerConfig:
 
         assert VAD_OPTIONS["min_silence_duration_ms"] <= 1000
 
+    def test_vad_silence_threshold_respects_the_api_floor(self):
+        """Below 0.3s the API rejects the whole websocket (1008 invalid_request,
+        probed live 2026-07-27) — the failure mode is a deaf tutor with a
+        healthy-looking session, not an error the learner can see."""
+        from tutor_agent.adapters.worker import VAD_OPTIONS
+
+        assert VAD_OPTIONS["vad_silence_threshold_secs"] >= 0.3
+
     def test_stt_and_output_rates_are_distinct(self):
         from tutor_agent.adapters.realtime import SAMPLE_RATE
         from tutor_agent.adapters.worker import STT_SAMPLE_RATE
