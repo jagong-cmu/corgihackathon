@@ -91,6 +91,14 @@ class TurnMetricsSink:
 # output rate we publish at.
 STT_SAMPLE_RATE = 16_000
 
+# Pin transcription to one language. Left unset, the plugin turns on
+# per-utterance language detection, and a short or noisy clip can flip it: a
+# real session transcribed a garbled utterance as Turkish ("Açın."), the model
+# answered in Turkish, and the tutor audibly changed language mid-lesson.
+# Learners who want another language can set this; detection stays off either
+# way — an explicit choice beats a per-utterance guess.
+STT_LANGUAGE = os.environ.get("TUTOR_STT_LANGUAGE", "en")
+
 def _env_int(name: str, default: int, *, minimum: int) -> int:
     """Read an integer knob; a malformed or absurd value must not kill (or
     quietly destabilize) the worker — a zero or negative VAD window turns
@@ -232,6 +240,7 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         use_realtime=True,
         sample_rate=STT_SAMPLE_RATE,
         server_vad=VAD_OPTIONS,
+        language_code=STT_LANGUAGE,
     )
 
     # The avatar is collected AFTER the STT/turn wiring below (see the end of

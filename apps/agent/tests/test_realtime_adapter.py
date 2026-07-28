@@ -319,3 +319,11 @@ class TestWorkerConfig:
 
         assert STT_SAMPLE_RATE == 16_000
         assert SAMPLE_RATE == 48_000
+
+    def test_stt_language_is_pinned(self):
+        """Unpinned, the plugin enables per-utterance language detection, and
+        one noisy clip flipped a live session into Turkish — the tutor
+        answered in it. English by default; TUTOR_STT_LANGUAGE overrides."""
+        from tutor_agent.adapters.worker import STT_LANGUAGE
+
+        assert STT_LANGUAGE == "en"

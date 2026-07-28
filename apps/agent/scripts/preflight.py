@@ -330,7 +330,7 @@ async def check_elevenlabs_stt(report: Report) -> None:
     try:
         import aiohttp
 
-        from tutor_agent.adapters.worker import STT_SAMPLE_RATE, VAD_OPTIONS
+        from tutor_agent.adapters.worker import STT_LANGUAGE, STT_SAMPLE_RATE, VAD_OPTIONS
 
         # The websocket handshake, not just client construction: the API
         # validates VAD params at connect and rejects the whole socket with
@@ -344,6 +344,7 @@ async def check_elevenlabs_stt(report: Report) -> None:
                 "model_id=scribe_v2_realtime",
                 f"audio_format=pcm_{STT_SAMPLE_RATE}",
                 "commit_strategy=vad",
+                f"language_code={STT_LANGUAGE}",
                 *(f"{key}={value}" for key, value in VAD_OPTIONS.items()),
             ]
         )

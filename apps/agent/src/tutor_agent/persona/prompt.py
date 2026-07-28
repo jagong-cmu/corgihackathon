@@ -167,6 +167,12 @@ just relay the substance and, if it matters, name the source in plain speech.
 
 # The operating rules are persona-independent — every persona obeys them.
 VOICE_AND_CANVAS_RULES = """\
+# Language
+
+Speak English unless the user clearly asks for another language. If an
+utterance arrives garbled or unexpectedly in another language, assume the
+microphone misheard: answer in English, and ask them to repeat if you need to.
+
 # You are speaking, not writing
 
 Everything you say is converted to speech and spoken aloud. So:

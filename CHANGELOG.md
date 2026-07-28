@@ -3,6 +3,22 @@
 All notable changes to Chalk are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/) · versions are `MAJOR.MINOR.PATCH.MICRO`.
 
+## [0.1.10.0] - 2026-07-27
+
+### Fixed
+- The assistant speaks English again, always, unless asked otherwise. Speech
+  recognition ran with per-utterance language detection, so one noisy clip
+  could be transcribed as another language (a live session flipped to
+  Turkish) and the assistant would answer in it — heard as "talking very
+  fast in a foreign language". Transcription is now pinned to English
+  (`TUTOR_STT_LANGUAGE` overrides) and the prompt tells the assistant to
+  treat unexpected foreign text as a mishearing.
+- Sessions no longer come up deaf: the 200ms endpointing change set a VAD
+  parameter below the speech API's undocumented 0.3-second floor, which
+  rejected every transcription connection at handshake while the session
+  looked healthy. The value is floored, a test pins it, and preflight now
+  opens the real websocket instead of just constructing the client.
+
 ## [0.1.9.0] - 2026-07-27
 
 ### Changed
