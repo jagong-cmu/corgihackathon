@@ -241,7 +241,7 @@ export const animatedDiagramExample2: VisualSpec = {
  * Authoring block for the LLM (same bullet style as server/prompt.ts).
  * ------------------------------------------------------------------------- */
 
-export const ANIMATED_DIAGRAM_PROMPT: string = `- A concept, physics, or process that is best TAUGHT with a labeled, MOVING illustration (e.g. "explain Newton's second law", "explain acceleration in basketball terms", "how does a lever work", "show supply and demand", "the water cycle"):
+export const ANIMATED_DIAGRAM_PROMPT: string = `- A concept, physics, or process that is best SHOWN with a labeled, MOVING illustration (e.g. "explain Newton's second law", "explain acceleration in basketball terms", "how does a lever work", "show supply and demand", "the water cycle"):
     track "freeform", primitive "animated_diagram".
     content: {
       "viewBox"?: [width, height] (default [100, 60]; drawing area is x: 0..width, y: 0..height, y grows DOWNWARD),
@@ -252,7 +252,7 @@ export const ANIMATED_DIAGRAM_PROMPT: string = `- A concept, physics, or process
     - "icon" — ONE emoji drawn at "at" (set "size" ~10-16). THIS is how you make the scene look like the topic. Use a real-object emoji: 🏀 basketball, ⚽ ball, 🏀🧑 player, 🚗 car, 🚀 rocket, 🪝/⚙️ machine, 💧 water, ☀️ sun, ☁️ cloud, 🧲 magnet, 💡 idea, 📈 graph, 🎯 target. Give an icon a "moveTo" to make it travel/accelerate.
     - "label" — short text at "at" ("size" ~5-8, default 5.5). "arrow"/"line" — from→to, grows on; put a short "text" on it to name the force/flow. "ball" — plain filled circle (only when a generic dot is truly best). "box" — outlined rectangle ("w","h"). "dot" — small marker ("r").
   MOTION: any element with "at" may add "moveTo" — it EASES from "at" to "moveTo" as its step plays. This is the whole point: use it to SHOW the idea happening (the ball accelerates across, the price slides to where the lines cross, water rises).
-  MATCH THE STUDENT'S FRAMING — non-negotiable: if they ask for it "in basketball terms", the scene MUST be basketball — a 🏀 a 🧑 pushes/shoots, labels in that language ("your push", "the shot", "the hoop"). NEVER answer a themed request with a generic gray ball. Pick icons and words from the exact context they gave.
+  MATCH THE USER'S FRAMING — non-negotiable: if they ask for it "in basketball terms", the scene MUST be basketball — a 🏀 a 🧑 pushes/shoots, labels in that language ("your push", "the shot", "the hoop"). NEVER answer a themed request with a generic gray ball. Pick icons and words from the exact context they gave.
   LAYOUT (this is why past scenes looked bad — follow it):
     - 4-7 elements, spread out; never place two things on the same spot or let labels overlap shapes.
     - Show the formula/key relation ONCE, as a "label" near the top center (around [width/2, 9]).

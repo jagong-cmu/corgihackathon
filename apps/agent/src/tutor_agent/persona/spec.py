@@ -1,7 +1,7 @@
-"""The persona spec: identity + face + voice + teaching style (README §9).
+"""The persona spec: identity + face + voice + explaining style (README §9).
 
-A persona is NOT a paragraph of prose. Prose produces a generic tutor wearing
-someone's voice. What actually carries mannerism is:
+A persona is NOT a paragraph of prose. Prose produces a generic assistant
+wearing someone's voice. What actually carries mannerism is:
 
   1. structured speech habits  -> compiled into explicit prompt constraints
   2. few-shot dialogue         -> the model imitates the shape of real turns
@@ -48,11 +48,12 @@ class Level(StrEnum):
 
 class TeachingStyle(StrEnum):
     SOCRATIC = "socratic"
-    """Answers questions with questions; makes the learner do the reaching."""
+    """Guides with questions when the user wants to work something out themselves;
+    still answers directly when they just want the answer."""
     DIRECT = "direct"
     """States the answer, then explains why."""
     WORKED_EXAMPLE = "worked_example"
-    """Demonstrates on a parallel problem, then hands over a similar one."""
+    """Explains by walking a concrete example end to end."""
     STORY = "story"
     """Frames concepts as narrative before formalizing."""
 
@@ -62,17 +63,17 @@ class Identity(BaseModel):
 
     name: str
     relationship: str = Field(
-        description="How the learner knows this person, e.g. 'the learner's mother'. "
+        description="How the user knows this person, e.g. 'the user's personal assistant'. "
         "Goes into the prompt verbatim, so write it in third person."
     )
     bio: str | None = Field(
         default=None,
-        description="One or two sentences of background the tutor may reference naturally.",
+        description="One or two sentences of background the assistant may reference naturally.",
     )
 
 
 class Speech(BaseModel):
-    """How the person talks, independent of what they're teaching."""
+    """How the person talks, independent of what they're explaining."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -101,22 +102,22 @@ class Speech(BaseModel):
 
 
 class Pedagogy(BaseModel):
-    """How the person teaches."""
+    """How the person explains things."""
 
     model_config = ConfigDict(extra="forbid")
 
-    style: TeachingStyle = TeachingStyle.SOCRATIC
+    style: TeachingStyle = TeachingStyle.DIRECT
     patience: Level = Level.HIGH
     on_wrong_answer: str = Field(
-        default="asks what led the learner there before correcting",
+        default="asks what led them there before correcting",
         description="The single highest-signal pedagogy field. Wrong answers are where "
-        "a tutor's character actually shows.",
+        "a person's character actually shows.",
     )
     analogy_sources: list[str] = Field(
         default_factory=list,
         max_length=8,
         description="Domains this person reaches into for analogies, e.g. ['cooking']. "
-        "Distinct from the learner's interests, which drive simulation theming.",
+        "Distinct from the user's interests, which drive simulation theming.",
     )
     encouragement: str | None = Field(
         default=None, description="How they praise, e.g. 'understated — a nod, not a parade'."
@@ -124,7 +125,9 @@ class Pedagogy(BaseModel):
 
 
 class Exchange(BaseModel):
-    """One student turn and the tutor's reply, in this persona's voice."""
+    """One user turn and the assistant's reply, in this persona's voice.
+
+    Field names stay `student`/`tutor` for wire and YAML compatibility."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -184,7 +187,7 @@ class Consent(BaseModel):
 
 
 class PersonaSpec(BaseModel):
-    """A complete tutor persona."""
+    """A complete assistant persona."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -197,7 +200,7 @@ class PersonaSpec(BaseModel):
         default_factory=list,
         max_length=12,
         description="3-8 is the sweet spot. Below 3 the model falls back to a generic "
-        "tutor voice; above ~8 you burn prompt cache budget for diminishing returns.",
+        "assistant voice; above ~8 you burn prompt cache budget for diminishing returns.",
     )
     never_does: list[str] = Field(
         default_factory=list,

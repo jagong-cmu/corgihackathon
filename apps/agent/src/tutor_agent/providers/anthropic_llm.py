@@ -14,6 +14,12 @@ latency where it belongs — a canvas action never blocks on the client.
 Merge Agent Handler tools, when they arrive in Phase 5, must NOT be acked this
 way: they leave our infrastructure, can exceed a second, and must be narration
 covered (§7.3). Route them through a separate branch that resolves out of band.
+
+Server-side tools (web_search) are a third case: the API executes them itself
+mid-stream, so they need no ack at all. They surface here only as extra content
+blocks (`server_tool_use`, `web_search_tool_result`) that must ride along
+unchanged when a turn continues into another round, and as the `pause_turn`
+stop reason when the server's own tool loop wants to be resumed.
 """
 
 from __future__ import annotations
@@ -25,6 +31,10 @@ from typing import Any
 from .base import StreamEvent, TextDelta, ToolCall, TurnEnd
 
 _STUB_RESULT = json.dumps({"ok": True})
+
+# Block types that accept a cache_control mark. Server-tool blocks
+# (server_tool_use, web_search_tool_result) do not — marking one 400s.
+_CACHEABLE_BLOCK_TYPES = {"text", "image", "tool_use", "tool_result", "document"}
 
 
 def _cache_marked(messages: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -49,6 +59,11 @@ def _cache_marked(messages: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
         blocks: list[dict[str, Any]] = [{"type": "text", "text": content}]
     else:
         blocks = [dict(block) for block in content]
+    if blocks[-1].get("type", "text") not in _CACHEABLE_BLOCK_TYPES:
+        # A pause_turn continuation can end on a server-tool block, which
+        # cannot carry the mark. Skipping it costs one round of cache reuse;
+        # marking it kills the whole request.
+        return list(messages)
     blocks[-1] = {**blocks[-1], "cache_control": {"type": "ephemeral"}}
     last["content"] = blocks
     return [*messages[:-1], last]
@@ -201,6 +216,20 @@ class AnthropicLLM:
                             **({"is_error": True} if call.error else {}),
                         }
                     )
+                else:
+                    # Server-tool blocks (server_tool_use, web_search_tool_result)
+                    # and thinking blocks. Executed or produced API-side, so there
+                    # is nothing to ack — but they must round-trip verbatim if
+                    # this turn continues into another round, or the API rejects
+                    # the replayed conversation as inconsistent.
+                    assistant_blocks.append(block.model_dump(exclude_none=True))
+
+            if stop_reason == "pause_turn":
+                # The server-side tool loop (web_search) paused mid-turn.
+                # Re-send with the partial assistant message appended and no
+                # tool results; the server resumes where it left off.
+                convo = [*convo, {"role": "assistant", "content": assistant_blocks}]
+                continue
 
             if stop_reason != "tool_use" or not tool_results:
                 break

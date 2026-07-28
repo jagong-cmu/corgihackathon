@@ -53,7 +53,7 @@ export function TutorShell() {
   const [presenting, setPresenting] = useState(false);
   const shellRef = useRef<HTMLDivElement>(null);
 
-  const greeting = `Hi, I'm ${activeTutor.name}. Ask me anything — I'll explain it on the board while I talk.`;
+  const greeting = `Hi, I'm ${activeTutor.name}. Ask me anything — quick questions, big ideas, or something to walk through on the board.`;
   const activeSpokenText =
     live?.spokenText ||
     (liveDriven ? "Live session — listen in and watch the board." : greeting);
@@ -183,7 +183,7 @@ export function TutorShell() {
     };
   }, []);
 
-  const voiceLabel = loading ? "Thinking…" : live ? "Speaking aloud" : "Ready to teach";
+  const voiceLabel = loading ? "Thinking…" : live ? "Speaking aloud" : "Ready to help";
 
   return (
     <div className={`tutor-shell${presenting ? " presenting" : ""}`} ref={shellRef}>
@@ -208,7 +208,7 @@ export function TutorShell() {
           <button
             className="icon-btn icon-btn--accent"
             onClick={enterPresent}
-            title="Full screen the board (the tutor moves to a face-cam)"
+            title="Full screen the board (the assistant moves to a face-cam)"
           >
             <ExpandIcon />
             Full screen
@@ -291,7 +291,7 @@ export function TutorShell() {
         Exit
       </button>
 
-      <aside className="facecam" aria-label="Tutor face-cam">
+      <aside className="facecam" aria-label="Assistant face-cam">
         <div className="facecam-caption">
           <span className="facecam-live">
             <span className="waveform" aria-hidden>
