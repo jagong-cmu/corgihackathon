@@ -775,6 +775,21 @@ class TutorSession:
                 "%s prewarm failed — the next turn pays the cold start", name, exc_info=True
             )
 
+    @property
+    def is_busy(self) -> bool:
+        """True while a turn is in flight or a finished turn's audio may still
+        be playing out client-side.
+
+        The worker's turn-taking gate asks this to decide whether a learner
+        utterance is competing with the tutor for the floor (a pure
+        acknowledgment is dropped) or arriving into silence (every utterance
+        is a turn). Same two cases barge_in acts on, exposed as a question.
+        """
+        if self._cues.active_turn_id is not None:
+            return True
+        playing = self._playing_out
+        return playing is not None and time.perf_counter() < playing[1]
+
     async def barge_in(self) -> None:
         """The learner started talking. Kill the current turn's output.
 

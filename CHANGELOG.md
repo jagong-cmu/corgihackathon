@@ -3,6 +3,26 @@
 All notable changes to Chalk are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/) · versions are `MAJOR.MINOR.PATCH.MICRO`.
 
+## [0.1.8.0] - 2026-07-27
+
+### Fixed
+- The tutor finishes its sentences. Listening sounds from the learner —
+  "Okay.", "No problem.", "Thank you." — were treated as interruptions: they
+  killed the rest of the reply mid-sentence and then became "questions" the
+  tutor answered. In one real session 181 of 279 turns died this way, heard
+  as constant choppy half-replies. Speech onset alone no longer interrupts;
+  the tutor yields the floor the moment a live transcript proves the learner
+  is saying something substantive (or after 600ms when no transcript
+  evidence arrives), and pure acknowledgments are dropped instead of
+  becoming turns.
+
+### Changed
+- The tutor replies sooner after you stop talking: end-of-speech detection
+  now commits after 200ms of silence (down from 500ms), both silence gates
+  follow the `TUTOR_VAD_MIN_SILENCE_MS` knob (one was previously pinned at
+  500ms, silently capping the knob), and the voice-activity threshold rose
+  from 0.4 to 0.5 so trailing breath reads as silence rather than speech.
+
 ## [0.1.7.0] - 2026-07-26
 
 ### Fixed
