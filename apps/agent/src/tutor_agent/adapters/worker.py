@@ -22,6 +22,7 @@ from livekit import agents, rtc
 from livekit.plugins import elevenlabs as lk_elevenlabs
 
 from ..core.session import SessionConfig, TutorSession
+from ..core.turntaking import INTERRUPT_DEADLINE_S, UtteranceGate
 from ..persona import PersonaNotFoundError, PersonaSpec, get_persona
 from ..providers.anthropic_llm import AnthropicLLM
 from ..providers.factory import make_tts
@@ -128,14 +129,21 @@ async def _aclose_tts(tts) -> None:
 # which makes every turn wait 2.5s of silence before finalizing — more than the
 # entire 1.2s budget, spent doing nothing.
 #
-# 500ms is a tradeoff, not a free win: too low and a learner pausing mid-thought
+# 200ms is a tradeoff, not a free win: too low and a learner pausing mid-thought
 # gets cut off. The preempt/fold path (see FINAL_TRANSCRIPT below) makes an
 # over-eager split recoverable — the fragments rejoin into one turn — which is
-# why 500 is tenable where it wouldn't be otherwise. Env-tunable so it can be
+# why 200 is tenable where it wouldn't be otherwise. Env-tunable so it can be
 # re-tested against real speech without a code change.
+_VAD_SILENCE_MS = _env_int("TUTOR_VAD_MIN_SILENCE_MS", 200, minimum=100)
 VAD_OPTIONS = {
-    "min_silence_duration_ms": _env_int("TUTOR_VAD_MIN_SILENCE_MS", 500, minimum=100),
-    "vad_silence_threshold_secs": 0.5,
+    "min_silence_duration_ms": _VAD_SILENCE_MS,
+    # In lockstep with the commit gate: the larger of the two is the endpoint
+    # the learner actually waits on, so a fixed 0.5 here would cap the knob.
+    "vad_silence_threshold_secs": _VAD_SILENCE_MS / 1000,
+    # Above the vendor default of 0.4 so trailing low-volume audio (breath,
+    # the learner trailing off) reads as silence and starts the clock at the
+    # volume drop, not after it.
+    "vad_threshold": 0.5,
     "min_speech_duration_ms": 250,
 }
 
@@ -434,18 +442,38 @@ async def entrypoint(ctx: agents.JobContext) -> None:
             await stream.aclose()
 
     last_interim_at: float | None = None
+    gate = UtteranceGate()
+    gate_deadline: asyncio.Task | None = None
+
+    async def _barge_on_deadline() -> None:
+        await asyncio.sleep(INTERRUPT_DEADLINE_S)
+        if gate.deadline_passed():
+            await session.barge_in()
+
+    def _cancel_deadline() -> None:
+        nonlocal gate_deadline
+        if gate_deadline is not None:
+            gate_deadline.cancel()
+            gate_deadline = None
 
     async def _on_speech_event(event: agents.stt.SpeechEvent) -> None:
-        nonlocal speech_ended_at, last_interim_at
+        nonlocal speech_ended_at, last_interim_at, gate_deadline
 
         if event.type == agents.stt.SpeechEventType.START_OF_SPEECH:
             # A fresh utterance begins — a leftover timestamp from a discarded
             # one must not leak into this turn's sttFinalizeMs.
             last_interim_at = None
-            # Barge-in fires HERE, not on the final transcript. Waiting for
-            # finalization means the tutor keeps talking over the learner for
-            # the whole VAD window.
-            await session.barge_in()
+            # Speech onset no longer interrupts by itself: most onsets while
+            # the tutor speaks are acknowledgments ("okay", "thank you"), and
+            # a real session showed the old onset-barge cancelling 181 of 279
+            # turns — heard as the tutor stopping mid-sentence over and over.
+            # The gate interrupts the moment an interim proves the utterance
+            # substantive, or on the deadline when no interims arrive at all
+            # (see core/turntaking.py for the policy and its provenance).
+            gate.start()
+            _cancel_deadline()
+            if session.is_busy:
+                gate_deadline = asyncio.create_task(_barge_on_deadline())
 
         elif event.type == agents.stt.SpeechEventType.INTERIM_TRANSCRIPT:
             # The budget clock (§4) starts when the learner stops talking, but
@@ -455,15 +483,26 @@ async def entrypoint(ctx: agents.JobContext) -> None:
             # learner stops speaking, so the last one before the final is the
             # closest observable stand-in for end-of-speech.
             last_interim_at = time.perf_counter()
+            interim = event.alternatives[0].text if event.alternatives else ""
+            if gate.heard(interim):
+                await session.barge_in()
 
         elif event.type == agents.stt.SpeechEventType.FINAL_TRANSCRIPT:
+            _cancel_deadline()
             text = event.alternatives[0].text.strip() if event.alternatives else ""
+            drop = gate.finish(text, tutor_busy=session.is_busy)
             # Consume the timestamp even for empty finals — a stale one left
             # behind would inflate the NEXT turn's sttFinalizeMs by however
             # long the room sat quiet.
             speech_ended_at = last_interim_at
             last_interim_at = None
             if not text:
+                return
+            if drop:
+                # A pure acknowledgment while the tutor holds the floor. Not
+                # a turn: answering "Thank you. Okay." mid-lesson costs the
+                # reply it interrupted AND a junk reply to the thanks.
+                log.info("learner (backchannel, not a turn): %s", text)
                 return
             log.info("learner: %s", text)
             # A turn already in flight? Mid-speech that's a barge-in; before
