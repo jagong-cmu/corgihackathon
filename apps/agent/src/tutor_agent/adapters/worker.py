@@ -196,7 +196,11 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         retrieval=retrieval,
         # "whiteboard" drives this repo's Chalk renderer (present_visual +
         # reveal_step). Set TUTOR_TOOLSET=canvas for the tldraw client.
-        config=SessionConfig(toolset=os.environ.get("TUTOR_TOOLSET", "whiteboard")),
+        # Web search is on by default; TUTOR_WEB_SEARCH=0 is the kill switch.
+        config=SessionConfig(
+            toolset=os.environ.get("TUTOR_TOOLSET", "whiteboard"),
+            web_search=os.environ.get("TUTOR_WEB_SEARCH", "1") != "0",
+        ),
         # Retrieval ACLs follow the learner the room was created for.
         user_id=user_id,
     )

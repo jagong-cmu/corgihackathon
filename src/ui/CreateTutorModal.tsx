@@ -169,7 +169,7 @@ export function CreateTutorModal() {
         </button>
 
         <h2 id="ct-title" className="ct-title">
-          Create a tutor
+          Create an assistant
         </h2>
 
         {/* Name -------------------------------------------------------- */}
@@ -314,7 +314,7 @@ export function CreateTutorModal() {
         )}
         {warnings && (
           <div className="ct-notes" role="status">
-            <p className="ct-notes-title">Your tutor was created — a couple of notes:</p>
+            <p className="ct-notes-title">Your assistant was created — a couple of notes:</p>
             <ul>
               {warnings.map((w) => (
                 <li key={w}>{w}</li>
@@ -352,7 +352,7 @@ export function CreateTutorModal() {
                 disabled={!canCreate}
                 onClick={() => void handleCreate()}
               >
-                {busy ? "Creating…" : "Create tutor"}
+                {busy ? "Creating…" : "Create assistant"}
               </button>
             </>
           )}

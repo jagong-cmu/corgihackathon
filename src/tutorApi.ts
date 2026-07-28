@@ -422,12 +422,12 @@ export async function createTutorFromCapture(
   onProgress?: (message: string) => void
 ): Promise<CreatedFromCapture> {
   const warnings: string[] = [];
-  onProgress?.("Reaching the tutor API…");
+  onProgress?.("Reaching the persona API…");
   if (!(await tutorApiAvailable())) {
     return {
       spec: null,
       warnings: [
-        "The persona API isn't running (see LIVE_TUTOR.md), so this tutor lives only in this browser session — it can't speak in live sessions.",
+        "The persona API isn't running (see LIVE_TUTOR.md), so this assistant lives only in this browser session — it can't speak in live sessions.",
       ],
     };
   }
@@ -436,15 +436,15 @@ export async function createTutorFromCapture(
   if (!slug) {
     return {
       spec: null,
-      warnings: ["Couldn't derive a tutor id from that name — start it with a letter."],
+      warnings: ["Couldn't derive an id from that name — start it with a letter."],
     };
   }
 
-  onProgress?.("Creating the tutor…");
+  onProgress?.("Creating the assistant…");
   await createTutor({
     id: slug,
     kind: "synthetic",
-    identity: { name: input.name.trim(), relationship: "the learner's tutor" },
+    identity: { name: input.name.trim(), relationship: "the user's personal voice assistant" },
     speech: {
       catchphrases: [],
       fillers: [],
@@ -453,9 +453,9 @@ export async function createTutorFromCapture(
       formality: "low",
     },
     pedagogy: {
-      style: "socratic",
+      style: "direct",
       patience: "high",
-      on_wrong_answer: "asks what led the learner there before correcting",
+      on_wrong_answer: "asks what led them there before correcting",
       analogy_sources: [],
     },
     few_shot: [],

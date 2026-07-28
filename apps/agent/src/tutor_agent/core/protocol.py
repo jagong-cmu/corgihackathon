@@ -282,7 +282,7 @@ _DESCRIPTIONS: dict[str, str] = {
         "rates of change, area, intersections, or the shape of a relationship."
     ),
     "spawn_sim": (
-        "Spawn an interactive, physically-correct simulation themed to the learner's "
+        "Spawn an interactive, physically-correct simulation themed to the user's "
         "interests. Call this for any concept involving motion, force, sampling, or change "
         "over time."
     ),
@@ -291,17 +291,17 @@ _DESCRIPTIONS: dict[str, str] = {
         "low value to slow down the moment you're describing."
     ),
     "sim_update": (
-        "Change one parameter of a running simulation so the learner sees the effect. Call "
+        "Change one parameter of a running simulation so the user sees the effect. Call "
         "this when answering 'what if' questions."
     ),
     "show_source": (
-        "Display an excerpt of the learner's own material (a slide, a page, a wiki block) so "
-        "you can teach on top of it. Prefer this over paraphrasing when their source uses "
+        "Display an excerpt of the user's own material (a slide, a page, a wiki block) so "
+        "you can explain on top of it. Prefer this over paraphrasing when their source uses "
         "specific notation or wording."
     ),
     "new_section": (
         "Scroll to fresh board space with a heading. Prefer this over clear_region — the board "
-        "is the learner's reviewable notes."
+        "is the user's reviewable notes."
     ),
     "clear_region": (
         "Erase a rectangle of the board. Use sparingly; new_section is almost always the "
