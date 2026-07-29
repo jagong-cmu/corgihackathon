@@ -3,6 +3,15 @@
 All notable changes to Chalk are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/) · versions are `MAJOR.MINOR.PATCH.MICRO`.
 
+## [0.1.11.0] - 2026-07-29
+
+### Fixed
+- Taking a photo with the computer's camera works when creating an assistant.
+  The camera preview never received the webcam stream (the video element
+  mounts only after the camera reports ready, but the stream was attached
+  before that), so the preview stayed black and "Take photo" did nothing.
+  Photo file uploads were unaffected and remain working.
+
 ## [0.1.10.0] - 2026-07-27
 
 ### Fixed
