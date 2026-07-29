@@ -82,6 +82,20 @@ export function useCamera(): CameraApi {
     return canvas.toDataURL("image/jpeg", 0.85);
   }, []);
 
+  // Attach the stream once the <video> is actually in the DOM. Consumers
+  // render the element conditionally on `ready` (the Create-Tutor modal
+  // does), so when start() resolves videoRef.current is still null — the
+  // in-start() attach below is for consumers that render the video
+  // unconditionally. Without this effect the mounted video stays black and
+  // capture() sees videoWidth 0: the "Take photo" button that does nothing.
+  useEffect(() => {
+    const v = videoRef.current;
+    const stream = streamRef.current;
+    if (!ready || !v || !stream || v.srcObject === stream) return;
+    v.srcObject = stream;
+    void v.play().catch(() => {});
+  }, [ready]);
+
   // Clean up the stream if the component unmounts mid-capture.
   useEffect(() => stop, [stop]);
 
